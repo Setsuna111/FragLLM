@@ -5,3 +5,5 @@ tensorboard_logs/
 CLAUDE.md/
 wandb/
 sh_djy/
+*.pyc
+**/__pycache__/
