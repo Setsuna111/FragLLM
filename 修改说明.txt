@@ -1,0 +1,24 @@
+0830 修改+支持git
+
+0. 支持使用git管理。此0829云盘版本为初始main版本，再上传git之前，已通过compare folder同步所有修改。
+1. 添加train_contrast_llama_allgather.py文件：
+    （1）支持跨gpu对比学习
+    （2）支持分minibatch推理
+    （3）CosineAnnealing学习率衰减
+    （4）对比策略改为取mean embedding
+2. 修改模型参数加载：protein_arch.py line 199起两处，将keyword in k 修改为 '.' + keyword + '.' in k
+3. git管理：
+    （1）Ignored：/data /checkpoints /checkpoints_contrast /tensorboard_logs
+    
+
+
+0829 修改
+
+1. dataloader_grounding.py文件415行修改为 frags = data_item["fragments"]
+2. scripts/train_llama.py 调整了一些参数的默认值（valid数据集默认为None）
+3. models/protein_arch.py 226和227行调整为：
+    inputs_embeds_old = self.get_model().get_input_embeddings()(input_ids)
+    inputs_embeds = inputs_embeds_old.clone()
+    避免lora训练时计算图出错
+4.新增了scripts/fragllama_flash_attn_monkey_patch.py和scripts/train_mem.py，支持flashattention
+5.stage2中batchsize调整为1（避免OOM）

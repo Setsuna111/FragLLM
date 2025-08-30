@@ -1,0 +1,5 @@
+train_contrast_llama.py: 是第一阶段训练脚本
+
+scripts/train_llama.py: 是指令微调脚本
+
+scripts/run_training_llama.sh: 指令微调训练脚本的执行脚本

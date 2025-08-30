@@ -1,0 +1,13 @@
+graphein==1.7.7
+transformers==4.40.2 
+tokenizers==0.19.1 
+accelerate==0.29.3 
+sentencepiece==0.2.0
+peft==0.10.0
+biopython==1.81
+networkx==2.5
+chardet==5.2.0 
+charset-normalizer==2.0.4
+multiprocess==0.70.16
+tensorboard==2.14.0
+evaluate==0.4.2
