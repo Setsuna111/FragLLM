@@ -1,3 +1,9 @@
+0830_djy:修改内容
+0. protein_arch.py中调整了FragmentAdapter，统一了其调用过程，避免出现部分数据无需激活FragmentAdapter导致的计算图不一致的问题；
+1. dataset/templates.py中扩充了referring和grounding任务的指令模板；
+2. 额外添加了wandb/  sh_djy/  *.pyc  **/__pycache__/等文件的gitignore。
+
+
 0830 修改+支持git
 0. 支持使用git管理。0829云盘版本为初始main版本，再上传git之前，已通过compare folder同步所有修改。
 1. 添加train_contrast_llama_allgather.py文件：
