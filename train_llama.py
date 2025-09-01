@@ -12,6 +12,7 @@ import transformers
 import random
 import torch
 import os
+os.environ['CUDA_VISIBLE_DEVICES'] = '7'  # restrict GPU visibility
 import json
 
 from torch.utils.data import random_split, DataLoader
@@ -37,8 +38,10 @@ def rank0_print(*args):
 @dataclass
 class FragModelArguments:
     """Model arguments for fragment training."""
-    esm_path: Optional[str] = field(default="/home/djy/projects/Data/HF_models/esm2_t36_3B_UR50D", metadata={"help": "Path to ESM model"})
-    llama_path: Optional[str] = field(default="/home/djy/projects/Data/HF_models/RedHatAI-Llama-3.1-8B-Instruct", metadata={"help": "Path to LLaMA model"})
+    # esm_path: Optional[str] = field(default="/home/djy/projects/Data/HF_models/esm2_t36_3B_UR50D", metadata={"help": "Path to ESM model"})
+    # llama_path: Optional[str] = field(default="/home/djy/projects/Data/HF_models/RedHatAI-Llama-3.1-8B-Instruct", metadata={"help": "Path to LLaMA model"})
+    esm_path: Optional[str] = field(default="/home/lfj/projects_dir/pretrained_model/esm2_t36_3B_UR50D", metadata={"help": "Path to ESM model"})
+    llama_path: Optional[str] = field(default="/home/lfj/projects_dir/pretrained_model/Llama-3.1-8B-Instruct", metadata={"help": "Path to LLaMA model"})
     load_adapter_checkpoint_dir: Optional[str] = field(default=None, metadata={"help": "Path to load adapter checkpoint"})
     load_fragment_checkpoint_dir: Optional[str] = field(default=None, metadata={"help": "Path to load fragment checkpoint"})
     
