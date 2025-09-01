@@ -2,13 +2,13 @@ data/
 checkpoints/
 checkpoints_contrast/
 tensorboard_logs/
+
 eval/cache/
+
 CLAUDE.md
-
-# Python bytecode
-__pycache__/
+CLAUDE.md/
+wandb/
+sh_djy/
 *.pyc
-*.pyo
-*.pyd
-
-
+**/__pycache__/
+eval_results/

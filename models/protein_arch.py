@@ -96,7 +96,7 @@ class FragmentAdapter(nn.Module):
     ) -> None:
         super(FragmentAdapter, self).__init__()
         self.protein_layer_norm = nn.LayerNorm(protein_emb_dim)
-        self.perceiver = Perceiver(
+        self.perceiver_layer = Perceiver(
             protein_emb_dim, perceiver_latent_size, text_emb_dim, num_perceiver_heads, num_perceiver_layers, dropout
         )
 
@@ -107,25 +107,42 @@ class FragmentAdapter(nn.Module):
         encoder_attention_mask: Tensor,
         **kwargs: Any,
     ) -> Union[Tuple[Tensor], Optional[Tuple[Tensor, Tuple[Tensor, ...]]]]:
-        frag_latents = [None] * len(position_refs)
+        
         assert encoder_hidden_states is not None
+        batch_size = len(position_refs)
+        
+        # 1. Normalize the protein embeddings first. This is a static operation.
         encoder_hidden_states = self.protein_layer_norm(encoder_hidden_states)
-        for i, (protein_emb, position_ref, encoder_mask) in enumerate(zip(encoder_hidden_states, position_refs, encoder_attention_mask)):
-            if position_ref is not None:
-                frag_hidden_states = protein_emb[encoder_mask][position_ref[0]:position_ref[1]]
-                frag_latents[i] = self.perceiver(frag_hidden_states)
-            else:
-                frag_latents[i] = None
-        return frag_latents
-    # def forward(
-    #     self,
-    #     frag_encoder_hidden_states: Tensor, # (bsz, seq_len, protein_emb_dim)
-    #     **kwargs: Any,
-    # ) -> Union[Tuple[Tensor], Optional[Tuple[Tensor, Tuple[Tensor, ...]]]]:
-    #     frag_encoder_hidden_states = self.protein_layer_norm(frag_encoder_hidden_states)
-    #     frag_latents = self.perceiver(frag_encoder_hidden_states)
-    #     return frag_latents
+        
+        # 2. Prepare a list of inputs for the perceiver.
+        # For items without a real position_ref, we create a standard dummy input.
+        all_frag_latents = []
+        for i in range(batch_size):
+            protein_emb = encoder_hidden_states[i]
+            encoder_mask = encoder_attention_mask[i]
+            position_ref = position_refs[i]
 
+            if position_ref is not None:
+                # This is a REAL input
+                frag_hidden_states = protein_emb[encoder_mask][position_ref[0]:position_ref[1]]
+                all_frag_latents.append(self.perceiver_layer(frag_hidden_states))
+            else:
+                # This is a DUMMY input to make the batch complete
+                # Using a slice of length 1 is a safe default
+                dummy_hidden_states = protein_emb[encoder_mask][0:1]
+                all_frag_latents.append(self.perceiver_layer(dummy_hidden_states))
+
+        
+        # 3. Reconstruct the final output list.
+        # This final loop is fine because it doesn't call any nn.Modules.
+        # It just selects the results based on the original condition.
+        final_frag_latents = [None] * batch_size
+        for i in range(batch_size):
+            if position_refs[i] is not None:
+                final_frag_latents[i] = all_frag_latents[i]
+            # If position_refs[i] was None, the list entry correctly remains None.
+                
+        return final_frag_latents
 
 class ModalityAdapter(nn.Module):
     """2-layer adapter to match the hidden size of different modalities."""
@@ -162,7 +179,7 @@ class ProteinMetaModel:
         if hasattr(config, "esm_path"):
             self.esm_encoder = EsmModel.from_pretrained(config.esm_path)
             self.adapter = ModalityAdapter(config.protein_emb_dim, config.intermediate_dim, config.hidden_size, config.dropout_rate)
-            self.fragment_adapter = FragmentAdapter(config.protein_emb_dim, config.hidden_size, config.perceiver_latent_size, config.num_perceiver_heads, config.num_perceiver_layers, config.adapter_config.dropout_rate)
+            self.fragment_adapter = FragmentAdapter(config.protein_emb_dim, config.hidden_size, config.perceiver_latent_size, config.num_perceiver_heads, config.num_perceiver_layers, config.dropout_rate)
 
     def get_esm_encoder(self):
         esm_encoder = getattr(self, "esm_encoder", None)

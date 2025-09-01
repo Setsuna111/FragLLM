@@ -73,7 +73,7 @@ from typing import Dict, List, Literal, Optional, Union
 
 import torch
 import torch.utils.data
-import torch_geometric.loader.dataloader
+# import torch_geometric.loader.dataloader
 from transformers import PreTrainedTokenizer
 from .dataloader_refferring import *
 from .dataloader_grounding import *
@@ -91,11 +91,15 @@ class FragDataCollator:
             llm_tokenizer: PreTrainedTokenizer,
             mode: Literal["train", "inference"] = "train",
             max_sequence_length: Optional[int] = 1021, 
+            max_description_length: Optional[int] = None,
+            use_max_desc_length: bool = False,
             ):
         self.sequence_tokenizer = sequence_tokenizer
         self.llm_tokenizer = llm_tokenizer
         self.mode = mode
         self.max_sequence_length = max_sequence_length
+        self.max_description_length = max_description_length
+        self.use_max_desc_length = use_max_desc_length
 
     def __call__(self, batch: List[Dict[str, str]]) -> Dict[str, torch.Tensor]:
         sequences = [item["sequence"] for item in batch]
@@ -141,9 +145,9 @@ class FragDataCollator:
         answer_attention_mask = tokenized_answers["attention_mask"]
 
         # truncate descriptions
-        # if (self.max_description_length is not None) and (answer_input_ids.size(1) > self.max_description_length):
-        #     answer_input_ids = answer_input_ids[:, :self.max_description_length]
-        #     answer_attention_mask = answer_attention_mask[:, :self.max_description_length]
+        if (self.max_description_length is not None) and (answer_input_ids.size(1) > self.max_description_length) and self.use_max_desc_length:
+            answer_input_ids = answer_input_ids[:, :self.max_description_length]
+            answer_attention_mask = answer_attention_mask[:, :self.max_description_length]
 
         # prepare labels
         labels = answer_input_ids.clone()
