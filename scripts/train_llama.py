@@ -399,8 +399,6 @@ def train(attn_implementation=None):
             for p in model.get_model().fragment_adapter.parameters():
                 p.requires_grad_(False)
         
-
-    
     rank0_print("Model:")
     rank0_print(model)
     rank0_print("ModelTrainable:")
