@@ -100,7 +100,7 @@ class ProteinLlamaForCausalLM(LlamaForCausalLM, ProteinMetaForCausalLM):
     ) -> Union[GenerateOutput, torch.LongTensor]:
         
         input_ids, position_ids, attention_mask, past_key_values, inputs_embeds, labels, encoder_output, adapter_output, encoder_attention_mask = self.prepare_inputs_labels_for_protein(
-                input_ids, position_ids, attention_mask, past_key_values, labels,
+                input_ids, None, attention_mask, None, None,
                 protein_input_ids, protein_attention_mask, None, None, protein_inputs_embeds, position_refs,None,None,None
             )
         return super().generate(
