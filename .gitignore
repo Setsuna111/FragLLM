@@ -7,3 +7,4 @@ wandb/
 sh_djy/
 *.pyc
 **/__pycache__/
+eval_results/

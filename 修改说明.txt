@@ -1,3 +1,11 @@
+0901_djy:修改内容
+0. dataset/dataloader_frag.py中新增94-95，101-102，148-150行，适配description截断要求；
+1. 调整models/protein_arch.py中182行FragmentAdapter初始化时，传入参数设错误的问题，没有config.adapter;
+2. models/protein_llama.py中103行，将generate时prepare_inputs_labels_for_protein的无用传参设为None
+3. merge_lora_weights.py 新增lora权重合并脚本
+4. ./eval 新增description任务评估代码
+
+
 0830_djy:修改内容
 0. protein_arch.py中调整了FragmentAdapter，统一了其调用过程，避免出现部分数据无需激活FragmentAdapter导致的计算图不一致的问题；
 1. dataset/templates.py中扩充了referring和grounding任务的指令模板；
