@@ -4,3 +4,11 @@ checkpoints_contrast/
 tensorboard_logs/
 eval/cache/
 CLAUDE.md
+
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+
