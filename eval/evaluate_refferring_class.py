@@ -5,6 +5,7 @@ import numpy as np
 import json
 import pickle
 import os
+import evaluate
 os.environ['CUDA_VISIBLE_DEVICES'] = '7'  # restrict GPU visibility
 from typing import Optional, Union, List, Dict, Any
 from sentence_transformers import SentenceTransformer
@@ -72,6 +73,11 @@ class LanguageMetrics:
     """
     
     def __init__(self, device: str = 'cpu'):
+        self.bleu = evaluate.load(path="./eval/metrics/bleu")
+        self.rouge = evaluate.load(path="./eval/metrics/rouge")
+        self.bert_score = evaluate.load(path="./eval/metrics/bertscore")
+        self.bert_model_type = "/home/djy/projects/Data/HF_models/biobert-large-cased-v1.1"
+
         self.device = device
         self.reset()
     
@@ -87,10 +93,17 @@ class LanguageMetrics:
     
     def compute(self) -> Dict[str, float]:
         """Compute language metrics. To be implemented."""
+        res_bleu = self.bleu.compute(predictions=self.pred_texts, references=self.target_texts)
+        res_rouge = self.rouge.compute(predictions=self.pred_texts, references=self.target_texts)
+        res_bertscore = self.bert_score.compute(predictions=self.pred_texts, references=self.target_texts, model_type=self.bert_model_type, num_layers=24)
+
+        def Average(lst):
+            return sum(lst) / len(lst)
+
         return {
-            'bleu': 0.0,
-            'rouge_l': 0.0,
-            'meteor': 0.0
+            'bleu': res_bleu,
+            'rouge_l': res_rouge,
+            'meteor': Average(res_bertscore['f1'])
         }
 
 
