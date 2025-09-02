@@ -2,6 +2,10 @@ data/
 checkpoints/
 checkpoints_contrast/
 tensorboard_logs/
+
+eval/cache/
+
+CLAUDE.md
 CLAUDE.md/
 wandb/
 sh_djy/

@@ -4,9 +4,9 @@
 export MASTER_PORT=$(shuf -i 2000-65000 -n 1)
 export WANDB_DISABLED=true
 export PYTHONPATH=$(pwd):$PYTHONPATH
-deepspeed  --include "localhost:0,1,2,3,4,5,7" --master_port $MASTER_PORT  scripts/train_llama.py \
-    --esm_path "/home/djy/projects/Data/HF_models/esm2_t36_3B_UR50D" \
-    --llama_path "/home/djy/projects/Data/HF_models/Meta-Llama-3.1-8B-Instruct" \
+deepspeed  --include "localhost:6,7" --master_port $MASTER_PORT  scripts/train_llama.py \
+    --esm_path "/home/lfj/projects_dir/pretrained_model/esm2_t36_3B_UR50D" \
+    --llama_path "/home/lfj/projects_dir/pretrained_model/Llama-3.1-8B-Instruct" \
     --dropout_rate 0.3 \
     --intermediate_dim 2048 \
     --perceiver_latent_size 1 \
@@ -38,18 +38,18 @@ deepspeed  --include "localhost:0,1,2,3,4,5,7" --master_port $MASTER_PORT  scrip
     --bf16 True \
     --tf32 True \
     --gradient_checkpointing True \
-    --deepspeed ./scripts/zero2_offload.json \
+    --deepspeed ./scripts/zero2.json \
     --tune_fragment_adapter False \
     --tune_adapter False \
     --freeze_adapter False \
     --freeze_fragment_adapter False \
     --report_to tensorboard \
-    # --lora_enable True \
-    # --lora_r 16 \
-    # --lora_alpha 32 \
-    # --lora_dropout 0.1 \
-    # --lora_bias "none" \
-    # --lora_target_modules "self_attn.q_proj,self_attn.k_proj,self_attn.v_proj,self_attn.o_proj,mlp.gate_proj,mlp.up_proj,mlp.down_proj" \
+    --lora_enable True \
+    --lora_r 16 \
+    --lora_alpha 32 \
+    --lora_dropout 0.1 \
+    --lora_bias "none" \
+    --lora_target_modules "self_attn.q_proj,self_attn.k_proj,self_attn.v_proj,self_attn.o_proj,mlp.gate_proj,mlp.up_proj,mlp.down_proj" \
 
     # -dataset_valid_config "ActRefClass||BindIRefClass||DomRefClass||EvoRefClass||MotifRefClass" \
     # --sample_rate_valid "1,1,1,1,1" \

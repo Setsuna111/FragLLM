@@ -5,6 +5,13 @@
 3. merge_lora_weights.py 新增lora权重合并脚本
 4. ./eval 新增description任务评估代码
 
+0831 测试指标
+1. ReferenceMetrics，统一的reference任务指标计算类，内含分类指标类和语言指标类（TODO）
+2. 支持多种输入
+    1. Label-only: Traditional classification with pred_labels + target_labels
+    2. InterPro text retrieval: LLM text descriptions + true InterPro IDs 
+    3. Language metrics: Predicted texts + target texts for BLEU/ROUGE
+    4. Combined: Any combination of the above for comprehensive evaluation
 
 0830_djy:修改内容
 0. protein_arch.py中调整了FragmentAdapter，统一了其调用过程，避免出现部分数据无需激活FragmentAdapter导致的计算图不一致的问题；
