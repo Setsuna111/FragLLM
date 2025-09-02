@@ -8,3 +8,4 @@ sh_djy/
 *.pyc
 **/__pycache__/
 eval_results/
+eval_local/
