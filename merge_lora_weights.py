@@ -60,7 +60,7 @@ def load_pretrained_model_fragllm(model_path, model_base, model_name, load_8bit=
         non_lora_trainables = {(k[11:] if k.startswith('base_model.') else k): v for k, v in non_lora_trainables.items()}
         if any(k.startswith('model.model.') for k in non_lora_trainables):
             non_lora_trainables = {(k[6:] if k.startswith('model.') else k): v for k, v in non_lora_trainables.items()}
-        import pdb; pdb.set_trace()
+        # import pdb; pdb.set_trace()
         model.load_state_dict(non_lora_trainables, strict=False)
         # import pdb;pdb.set_trace()
         from peft import PeftModel
@@ -113,9 +113,14 @@ def merge_lora(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model-path", type=str, default="/home/djy/projects/Documents/FragLLM_git/checkpoints/fragment_training_only_stage2_lora32_epoch1_0831")
-    parser.add_argument("--model-base", type=str, default="/home/djy/projects/Data/HF_models/Meta-Llama-3.1-8B-Instruct")
-    parser.add_argument("--save-model-path", type=str, default="/home/djy/projects/Documents/FragLLM_git/checkpoints/fragment_training_only_stage2_lora32_epoch1_0831_merge_initesm")
+    # parser.add_argument("--model-path", type=str, default="/home/djy/projects/Documents/FragLLM_git/checkpoints/fragment_training_only_stage2_lora32_epoch1_0831")
+    # parser.add_argument("--model-base", type=str, default="/home/djy/projects/Data/HF_models/Meta-Llama-3.1-8B-Instruct")
+    # parser.add_argument("--save-model-path", type=str, default="/home/djy/projects/Documents/FragLLM_git/checkpoints/fragment_training_only_stage2_lora32_epoch1_0831_merge_initesm")
+
+    parser.add_argument("--model-path", type=str, default="/home/lfj/projects_dir/FragLLM/checkpoints/fragment_training_only_stage2_lora16_save_test")
+    parser.add_argument("--model-base", type=str, default="/home/lfj/projects_dir/pretrained_model/Llama-3.1-8B-Instruct")
+    parser.add_argument("--save-model-path", type=str, default="/home/lfj/projects_dir/FragLLM/checkpoints/fragment_training_only_stage2_lora16_save_test_merge")
+
 
     args = parser.parse_args()
 

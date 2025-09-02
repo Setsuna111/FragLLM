@@ -1,3 +1,8 @@
+0902 lfj
+1. trainer支持在training checkpoints时存储非lora参数，支持在resume_from_checkpoints时读入非lora参数，此处修改存储在train_llama_lfj.py，暂未修改到train_llama.py中
+2. eval/evaluate_reference.py：新增评估任务的inference，支持单/多卡模式
+
+
 0901_djy:修改内容
 0. dataset/dataloader_frag.py中新增94-95，101-102，148-150行，适配description截断要求；
 1. 调整models/protein_arch.py中182行FragmentAdapter初始化时，传入参数设错误的问题，没有config.adapter;
@@ -6,7 +11,7 @@
 4. ./eval 新增description任务评估代码
 
 0831 测试指标
-1. ReferenceMetrics，统一的reference任务指标计算类，内含分类指标类和语言指标类（TODO）
+1. ReferenceMetrics，统一的reference任务指标计算类，内含分类指标类和语言指标类
 2. 支持多种输入
     1. Label-only: Traditional classification with pred_labels + target_labels
     2. InterPro text retrieval: LLM text descriptions + true InterPro IDs 
