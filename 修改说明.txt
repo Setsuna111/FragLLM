@@ -1,7 +1,7 @@
-0902 lfj
-1. trainer支持在training checkpoints时存储非lora参数，支持在resume_from_checkpoints时读入非lora参数，此处修改存储在train_llama_lfj.py，暂未修改到train_llama.py中
-2. eval/evaluate_reference.py：新增评估任务的inference，支持单/多卡模式
-
+0903 lfj
+1. 新增eval/evaluate_reference.py,eval/evaluate_reference.sh，合并prot2textinference任务的推理，支持单卡debug模式，并支持多文件评估。修改并行存储逻辑，解决了多卡并行存储时总数不对、保留列名重复。
+2. trainer支持在training checkpoints时存储非lora参数，支持在resume_from_checkpoints时读入非lora参数，此处修改存储在train_llama_lfj.py，暂未修改到train_llama.py中
+3. git merge使用说明：理想情况下，每一个开发分支只实现一个功能，开发结束后，及时合并入main，并checkout最新的main继续开发下一个功能。
 
 0901_djy:修改内容
 0. dataset/dataloader_frag.py中新增94-95，101-102，148-150行，适配description截断要求；

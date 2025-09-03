@@ -5,8 +5,7 @@ tensorboard_logs/
 
 eval/cache/
 results/
-scripts/train_llama_lfj.py
-scripts/run_training_llama_lfj.sh
+scripts/run_training_llama_lfj_*.sh
 test_lfj.ipynb
 
 CLAUDE.md
