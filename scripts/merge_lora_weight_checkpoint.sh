@@ -1,0 +1,2 @@
+#!/bin/bash
+python merge_lora_weights_checkpoint.py --model-path /data/djy/FragLLM_git/checkpoints/fragment_training_only_stage2_bw_stage1_lora32_epoch5_function_0902/checkpoint-20000 --model-base /home/djy/projects/Data/HF_models/Meta-Llama-3.1-8B-Instruct --save-model-path /data/djy/FragLLM_git/checkpoints/fragment_training_only_stage2_bw_stage1_lora32_epoch5_function_reuselora_0902_checkpoint-20000_merge
