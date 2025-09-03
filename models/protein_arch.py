@@ -177,7 +177,7 @@ class ProteinMetaModel:
     def __init__(self, config):
         super(ProteinMetaModel, self).__init__(config)
         if hasattr(config, "esm_path"):
-            self.esm_encoder = EsmModel.from_pretrained(config.esm_path)
+            self.esm_encoder = EsmModel.from_pretrained(config.esm_path, add_pooling_layer=False)
             self.adapter = ModalityAdapter(config.protein_emb_dim, config.intermediate_dim, config.hidden_size, config.dropout_rate)
             self.fragment_adapter = FragmentAdapter(config.protein_emb_dim, config.hidden_size, config.perceiver_latent_size, config.num_perceiver_heads, config.num_perceiver_layers, config.dropout_rate)
 
