@@ -60,7 +60,6 @@ def load_pretrained_model_fragllm(model_path, model_base, model_name, load_8bit=
         non_lora_trainables = {(k[11:] if k.startswith('base_model.') else k): v for k, v in non_lora_trainables.items()}
         if any(k.startswith('model.model.') for k in non_lora_trainables):
             non_lora_trainables = {(k[6:] if k.startswith('model.') else k): v for k, v in non_lora_trainables.items()}
-        import pdb; pdb.set_trace()
         model.load_state_dict(non_lora_trainables, strict=False)
         # import pdb;pdb.set_trace()
         from peft import PeftModel

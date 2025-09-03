@@ -9,7 +9,7 @@ import pandas as pd
 import os
 import re
 from typing import Any, Dict, List
-
+import json
 import evaluate
 from transformers import BertTokenizer, RobertaTokenizer
 import scripts.utils_argparse as utils_argparse
@@ -23,6 +23,8 @@ argParser.add_argument("--evaluate_bleu", type=utils_argparse.str2bool)
 argParser.add_argument("--evaluate_rouge", type=utils_argparse.str2bool)
 argParser.add_argument("--evaluate_bert_score", type=utils_argparse.str2bool)
 argParser.add_argument("--verbose", type=utils_argparse.str2bool)
+
+
 
 
 def compute_exact_match(predictions: List[str], references: List[str]) -> float:
@@ -148,7 +150,11 @@ def benchmark_csv(args: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     res = res.drop_duplicates()
     predictions = res['generated'].tolist()
     references = res['function'].tolist()
-    return compute_metrics(predictions=predictions, references=references, args=args)
+    results = compute_metrics(predictions=predictions, references=references, args=args)
+    save_results_path = args["results_path"].replace(".csv", "_metrics.json")
+    with open(save_results_path, "w") as f:
+        json.dump(results, f)
+    return results
 
 
 if __name__ == "__main__": 
