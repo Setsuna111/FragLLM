@@ -120,10 +120,14 @@ if __name__ == "__main__":
     # 0902 test
     # model_path = "/home/lfj/projects_dir/FragLLM/checkpoints/test_load_stage1_only_motifdesc_lora"
     # model_path = "/home/lfj/projects_dir/FragLLM/checkpoints/test_load_stage1_both_motifdesc_motifcls_lora"
-    model_path = "/home/lfj/projects_dir/FragLLM/checkpoints/test_from_scratch_only_motifdesc_lora"
+    # model_path = "/home/lfj/projects_dir/FragLLM/checkpoints/test_from_scratch_only_motifdesc_lora"
 
     # 0903 test
+    # model_path = "/home/lfj/projects_dir/FragLLM/checkpoints/test_load_stage1_only_motifdesc_lora_fast_save/"
+    # model_path = "/home/lfj/projects_dir/FragLLM/checkpoints/test_load_stage1_only_motifdesc_lora_fast_save/checkpoint-700/"
+    model_path = "/home/lfj/projects_dir/FragLLM/checkpoints/test_load_stage1_only_motifdesc_lora_fast_save/checkpoint-600/"
 
+    model_path = model_path.rstrip('/')
     merged_path = model_path + "_merge"
 
     parser.add_argument("--model-path", type=str, default=model_path)

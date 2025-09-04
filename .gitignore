@@ -7,6 +7,7 @@ eval/cache/
 results/
 scripts/run_training_llama_lfj_*.sh
 test_lfj.ipynb
+eval/evaluate_desc_lfj.py
 
 CLAUDE.md
 CLAUDE.md/

@@ -40,15 +40,16 @@ REFERENCE_DATASETS = {
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Unified evaluation script for function and reference datasets')
-    parser.add_argument("--model_path", required=True, help="path to the trained model")
+    parser.add_argument("--model_path", default="/home/lfj/projects_dir/FragLLM/checkpoints/test_load_stage1_only_motifdesc_lora_fast_save/checkpoint-600_merge/", help="path to the trained model")
     parser.add_argument("--temperature", default=0.0, type=float, help="generation temperature")
     parser.add_argument("--root_dir", default='./data', help="root folder of the data")
-    parser.add_argument("--datasets", required=True, help="comma-separated list of datasets to evaluate")
+    parser.add_argument("--datasets", default="MotifRefDesc", help="comma-separated list of datasets to evaluate")
     parser.add_argument("--split", default="test", help="data split to use (train, test, eval)")
-    parser.add_argument("--batch_per_device", type=int, default=1, help="batch size for each device")
+    parser.add_argument("--batch_per_device", type=int, default=2, help="batch size for each device")
     parser.add_argument("--save_results_dir", default="./eval_results", help="directory to save results")
     parser.add_argument("--single_gpu", action="store_true", help="use single GPU mode instead of distributed")
-    parser.add_argument("--gpu_id", type=int, default=0, help="GPU ID to use in single GPU mode")
+    # parser.add_argument("--single_gpu", default=True, help="use single GPU mode instead of distributed")
+    parser.add_argument("--gpu_id", type=int, default=7, help="GPU ID to use in single GPU mode")
     
     # Distributed training arguments
     parser.add_argument('--world_size', default=1, type=int, help='number of distributed processes')
@@ -100,7 +101,7 @@ def evaluate_dataset(dataset_name, model, tokenizer, sequence_tokenizer, data_co
         distributed_sampler = DistributedSampler(eval_dataset, rank=args.rank, shuffle=False, drop_last=False)
         dataloader = DataLoader(eval_dataset, batch_size=args.batch_per_device, 
                               num_workers=0, sampler=distributed_sampler, collate_fn=data_collator)
-    
+        print("DEBUG:", list(distributed_sampler))  # 0904 debug
     # Clean existing results file (only on rank 0 or single GPU mode)
     should_clean_file = args.single_gpu or (torch.distributed.is_initialized() and torch.distributed.get_rank() == 0)
     if should_clean_file and os.path.exists(save_results_path):
@@ -109,6 +110,7 @@ def evaluate_dataset(dataset_name, model, tokenizer, sequence_tokenizer, data_co
     
     generated = []
     references = []
+    dataset_idx_list = []
     
     print(f"Starting evaluation on {dataset_name}...")
     for inputs in tqdm(dataloader, desc=f"Evaluating {dataset_name}"):
@@ -119,7 +121,11 @@ def evaluate_dataset(dataset_name, model, tokenizer, sequence_tokenizer, data_co
         inputs = {k: v.to(device=device, non_blocking=True) if hasattr(v, 'to') else v 
                  for k, v in inputs.items()}
         
+        dataset_idx_list += inputs.get('dataset_idxs', [None]*inputs['input_ids'].size(0))
+
         # Generate responses
+        # generated += tokenizer.batch_decode(inputs['answer_input_ids'], skip_special_tokens=True)  # 0904 debug，代替实际生成过程
+
         with torch.no_grad():
             tok_ids = model.generate(
                 inputs=None,
@@ -146,7 +152,7 @@ def evaluate_dataset(dataset_name, model, tokenizer, sequence_tokenizer, data_co
         data = {
             'generated': generated,
             'reference': references,
-            'dataset': [dataset_name] * len(generated)
+            'dataset_idx': dataset_idx_list
         }
         df = pd.DataFrame(data)
         df.to_csv(save_results_path, index=False)
@@ -159,7 +165,7 @@ def evaluate_dataset(dataset_name, model, tokenizer, sequence_tokenizer, data_co
             data = {
                 'generated': generated,
                 'reference': references,
-                'dataset': [dataset_name] * len(generated)
+                'dataset_idx': dataset_idx_list
             }
             df = pd.DataFrame(data)
             df.to_csv(partial_save_path, index=False)
@@ -170,7 +176,7 @@ def evaluate_dataset(dataset_name, model, tokenizer, sequence_tokenizer, data_co
             # Only rank 0 merges all results
             if torch.distributed.get_rank() == 0:
                 print(f"Rank 0: Merging results from all GPUs...")
-                all_data = {'generated': [], 'reference': [], 'dataset': []}
+                all_data = {'generated': [], 'reference': [], 'dataset_idx': []}
                 
                 # Collect results from all ranks
                 for rank in range(args.world_size):
@@ -179,12 +185,14 @@ def evaluate_dataset(dataset_name, model, tokenizer, sequence_tokenizer, data_co
                         rank_df = pd.read_csv(rank_file)
                         all_data['generated'].extend(rank_df['generated'].tolist())
                         all_data['reference'].extend(rank_df['reference'].tolist())
-                        all_data['dataset'].extend(rank_df['dataset'].tolist())
+                        all_data['dataset_idx'].extend(rank_df['dataset_idx'].tolist())
                         # Clean up partial file
                         os.remove(rank_file)
-                
+
                 # Save merged results
                 merged_df = pd.DataFrame(all_data)
+                # drop duplicates based on dataset_idx
+                merged_df = merged_df.drop_duplicates(subset=['dataset_idx'], keep='first')
                 merged_df.to_csv(save_results_path, index=False)
                 total_samples = len(all_data['generated'])
                 print(f"Merged results from {args.world_size} GPUs: {total_samples} total samples")
@@ -200,7 +208,7 @@ def evaluate_dataset(dataset_name, model, tokenizer, sequence_tokenizer, data_co
             data = {
                 'generated': generated,
                 'reference': references,
-                'dataset': [dataset_name] * len(generated)
+                'dataset_idx': dataset_idx_list
             }
             df = pd.DataFrame(data)
             df.to_csv(save_results_path, index=False)

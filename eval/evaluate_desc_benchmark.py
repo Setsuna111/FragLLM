@@ -147,7 +147,7 @@ def benchmark_csv(args: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     Compute metrics including BLEU, ROUGE and BERT scores and print results. 
     """
     res = pd.read_csv(args["results_path"])
-    res = res.drop_duplicates()
+    # res = res.drop_duplicates()
     predictions = res['generated'].tolist()
     references = res['function'].tolist()
     results = compute_metrics(predictions=predictions, references=references, args=args)

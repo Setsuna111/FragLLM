@@ -3,6 +3,12 @@
 2. README.md中添加了环境安装的流程
 3. dataset/dataloader_frag.py中将HybridDataset中随机加载样本的方式更改为了根据索引加载样本
 
+0904 lfj
+1. 进一步修改了eval/evaluate_reference.py在多GPU并行时的数据问题。首先在dataset/dataloader_frag.py，dataset/dataloader_refferring.py，dataset/dataloader_function.py中添加了返回数据在数据集中dataset_idx的操作，随后于eval/evaluate_reference.py对多卡并行推理结果依据eval/evaluate_reference.py去重。
+2. 由于测试数据集输出已经去重，故删除了evaluate_desc.py，evaluate_desc_benchmark.py中的去重代码，避免把（pred，label）相同的数据对剔除。
+3. 修改了dataset/dataloader_refferring.py中对超长sequence的截断方式，当片段长度大于1021时，截断片段尾部；当序列长度大于1021，片段长度小于1021时，计算新序列起点的安全范围，保证片段不被截断，随后在安全范围内随机采样起点；当序列长度小于1021时，正常处理。
+4. 删除了测试文件evaluate_reference_lfj.py，此外evaluate_function_desc.py/sh也可以删。
+
 0903 lfj
 1. 新增eval/evaluate_reference.py,eval/evaluate_reference.sh，合并prot2textinference任务的推理，支持单卡debug模式，并支持多文件评估。修改并行存储逻辑，解决了多卡并行存储时总数不对、保留列名重复。
 2. trainer支持在training checkpoints时存储非lora参数，支持在resume_from_checkpoints时读入非lora参数，此处修改存储在train_llama_lfj.py，暂未修改到train_llama.py中
