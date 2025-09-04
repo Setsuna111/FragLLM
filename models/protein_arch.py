@@ -241,6 +241,8 @@ class ProteinMetaForCausalLM(ABC):
             self, input_ids, position_ids, attention_mask, past_key_values, labels,
             protein_input_ids, protein_attention_mask, protein_position_ids, protein_head_mask, protein_inputs_embeds, position_refs,output_attentions,output_hidden_states,return_dict
     ):
+        # print(f"device: {input_ids.device}, protein_input_ids: {protein_input_ids}")  # 0904 debug
+
         if input_ids is not None:
             inputs_embeds_old = self.get_model().get_input_embeddings()(input_ids)
             inputs_embeds = inputs_embeds_old.clone()

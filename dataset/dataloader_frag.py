@@ -253,6 +253,8 @@ class HybridDatasetBase(torch.utils.data.Dataset):
         self.epoch_samples = epoch_samples if epoch_samples is not None else sum(len(item) for item in self.all_datasets)
         self.cumulative_sizes = self.cumsum(self.all_datasets)
 
+        print("self.cumulative_sizes: ", self.cumulative_sizes)  # 0904 debug
+
     @staticmethod
     def cumsum(sequence):
         r, s = [], 0
@@ -293,6 +295,7 @@ class HybridDatasetBase(torch.utils.data.Dataset):
     #     selected_dataset = self.all_datasets[dataset_idx]
     #     index = np.random.choice(len(selected_dataset))
     #     data = selected_dataset[index]
+    #     # print(f"Fetching item {index} from dataset {dataset_idx}")  # 0904 debug
     #     return data
     def __getitem__(self, idx):
         if idx < 0:
@@ -306,6 +309,9 @@ class HybridDatasetBase(torch.utils.data.Dataset):
             sample_idx = idx
         else:
             sample_idx = idx - self.cumulative_sizes[dataset_idx - 1]
+        
+        # print(f"Fetching item {idx} from dataset {dataset_idx} at index {sample_idx}")  # 0904 debug
+
         return self.all_datasets[dataset_idx][sample_idx]
     
 

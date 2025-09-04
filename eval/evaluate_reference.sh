@@ -8,9 +8,9 @@
 # ======================================
 
 # Model and data paths
-MODEL_PATH="/home/lfj/projects_dir/FragLLM/checkpoints/test_load_stage1_only_motifdesc_lora_fast_save/checkpoint-600_merge/"
+MODEL_PATH="/home/lfj/projects_dir/FragLLM/checkpoints/test_load_stage1_only_motifdesc_lora_fast_save_after_data_fix/checkpoint-1100_merge/"
 ROOT_DIR="./data"
-RESULTS_DIR="./results/results_reference_fast_save_test_multi_GPU_10"
+RESULTS_DIR="./results/results_reference_fast_save_test_0904"
 
 # Evaluation parameters
 SPLIT="test"
@@ -20,8 +20,8 @@ TEMPERATURE=0.0
 # GPU configuration
 USE_SINGLE_GPU=false  # Set to true for single GPU mode, false for multi-GPU
 SINGLE_GPU_ID=0       # GPU ID to use in single GPU mode
-export CUDA_VISIBLE_DEVICES=2,3,4,5,6,7  # Specify visible GPUs for multi-GPU mode
-NUM_GPUS=6           # Number of GPUs for distributed training
+export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7  # Specify visible GPUs for multi-GPU mode
+NUM_GPUS=8           # Number of GPUs for distributed training
 MASTER_PORT=24989     # Master port for distributed training
 
 # Dataset selection - modify as needed

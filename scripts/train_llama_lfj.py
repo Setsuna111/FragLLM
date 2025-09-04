@@ -6,6 +6,9 @@ using the HuggingFace Trainer framework with LoRA fine-tuning support.
 
 Based on train_trainer_refer.py but adapted for Esm2LlamaInstructForCausalLM.
 """
+import sys
+sys.path.append("..")
+sys.path.append(".")
 
 import pathlib
 import transformers
@@ -37,8 +40,8 @@ def rank0_print(*args):
 @dataclass
 class FragModelArguments:
     """Model arguments for fragment training."""
-    esm_path: Optional[str] = field(default="/home/djy/projects/Data/HF_models/esm2_t36_3B_UR50D", metadata={"help": "Path to ESM model"})
-    llama_path: Optional[str] = field(default="/home/djy/projects/Data/HF_models/RedHatAI-Llama-3.1-8B-Instruct", metadata={"help": "Path to LLaMA model"})
+    esm_path: Optional[str] = field(default="/home/lfj/projects_dir/pretrained_model/esm2_t36_3B_UR50D", metadata={"help": "Path to ESM model"})
+    llama_path: Optional[str] = field(default="/home/lfj/projects_dir/pretrained_model/Llama-3.1-8B-Instruct", metadata={"help": "Path to LLaMA model"})
     load_adapter_checkpoint_dir: Optional[str] = field(default=None, metadata={"help": "Path to load adapter checkpoint"})
     load_fragment_checkpoint_dir: Optional[str] = field(default=None, metadata={"help": "Path to load fragment checkpoint"})
     
@@ -64,8 +67,8 @@ class FragModelArguments:
 class FragDataArguments:
     """Data arguments for fragment training."""
     root_dir: Optional[str] = field(default="./data", metadata={"help": "Root directory for datasets"})
-    dataset_train_config: Optional[str] = field(default="ProFunction||ActRefClass||BindIRefClass||DomRefClass||EvoRefClass||MotifRefClass", metadata={"help": "Dataset config for training"})
-    sample_rate_train: Optional[str] = field(default="1,1,1,1,1,1", metadata={"help": "Sample rate for training"})
+    dataset_train_config: Optional[str] = field(default="MotifRefDesc||ActRefDesc||BindIRefDesc||DomRefDesc||EvoRefDesc", metadata={"help": "Dataset config for training"})
+    sample_rate_train: Optional[str] = field(default="1,1,1,1,1", metadata={"help": "Sample rate for training"})
     dataset_valid_config: Optional[str] = field(default=None, metadata={"help": "Dataset config for evaluation"})
     sample_rate_valid: Optional[str] = field(default="1", metadata={"help": "Sample rate for evaluation"})
     max_sequence_length: Optional[int] = field(default=1021, metadata={"help": "Maximum sequence length"})
@@ -196,84 +199,84 @@ class FragTrainer(Trainer):
         self.nan_inf_threshold = float('inf')  # NaN/Inf检测
         self.sample_loss_log_interval = 100  # 每100步打印一次样本级loss统计
         self.step_count = 0
-        
-    def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
-        """
-        重写compute_loss方法，添加样本级loss监控
-        """
-        if "labels" not in inputs:
-            return super().compute_loss(model, inputs, return_outputs=return_outputs)
-            
-        # 获取原始输出
-        outputs = model(**inputs)
-        logits = outputs.get("logits")
-        labels = inputs["labels"]
-        
-        if logits is None:
-            return super().compute_loss(model, inputs, return_outputs=return_outputs)
-            
-        # 计算样本级loss
-        loss_fct = nn.CrossEntropyLoss(reduction='none')  # 不进行reduction，保持样本维度
-        
-        # Flatten for loss calculation
-        shift_logits = logits[..., :-1, :].contiguous()
-        shift_labels = labels[..., 1:].contiguous()
-        
-        batch_size, seq_len, vocab_size = shift_logits.shape
-        flat_logits = shift_logits.view(-1, vocab_size)
-        flat_labels = shift_labels.view(-1)
-        
-        # 计算每个token的loss (不忽略-100)
-        token_losses = loss_fct(flat_logits, flat_labels)  # (batch_size * seq_len)
-        token_losses = token_losses.view(batch_size, seq_len)  # (batch_size, seq_len)
-        
-        # 只计算非-100标签的loss
-        valid_mask = (shift_labels != -100).float()
-        
-        # 样本级平均loss (每个样本的有效token平均loss)
-        sample_losses = (token_losses * valid_mask).sum(dim=1) / (valid_mask.sum(dim=1) + 1e-8)
-        
-        # 检测异常loss
-        self._check_anomalous_loss(sample_losses, inputs)
-        
-        # 返回批次平均loss用于优化
-        total_loss = sample_losses.mean()
-        
-        return (total_loss, outputs) if return_outputs else total_loss
     
-    def _check_anomalous_loss(self, sample_losses, inputs):
-        """
-        检测并打印异常loss样本信息
-        """
-        batch_size = sample_losses.shape[0]
+    # def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
+    #     """
+    #     重写compute_loss方法，添加样本级loss监控
+    #     """
+    #     if "labels" not in inputs:
+    #         return super().compute_loss(model, inputs, return_outputs=return_outputs)
+            
+    #     # 获取原始输出
+    #     outputs = model(**inputs)
+    #     logits = outputs.get("logits")
+    #     labels = inputs["labels"]
         
-        for i in range(batch_size):
-            sample_loss = sample_losses[i].item()
+    #     if logits is None:
+    #         return super().compute_loss(model, inputs, return_outputs=return_outputs)
             
-            # 检测NaN或Inf
-            if torch.isnan(sample_losses[i]) or torch.isinf(sample_losses[i]):
-                rank0_print(f"🚨 [STEP {self.state.global_step}] CRITICAL: NaN/Inf loss detected!")
-                rank0_print(f"   Sample {i}: loss = {sample_loss}")
-                self._print_sample_debug_info(inputs, i)
-                continue
-                
-            # 检测异常高loss
-            if sample_loss > self.loss_threshold:
-                rank0_print(f"⚠️  [STEP {self.state.global_step}] HIGH LOSS detected!")
-                rank0_print(f"   Sample {i}: loss = {sample_loss:.4f} (threshold: {self.loss_threshold})")
-                self._print_sample_debug_info(inputs, i)
-                
-        # 定期打印loss统计
-        self.step_count += 1
-        if self.step_count % self.sample_loss_log_interval == 0:
-            mean_loss = sample_losses.mean().item()
-            max_loss = sample_losses.max().item()
-            min_loss = sample_losses.min().item()
-            std_loss = sample_losses.std().item()
+    #     # 计算样本级loss
+    #     loss_fct = nn.CrossEntropyLoss(reduction='none')  # 不进行reduction，保持样本维度
+        
+    #     # Flatten for loss calculation
+    #     shift_logits = logits[..., :-1, :].contiguous()
+    #     shift_labels = labels[..., 1:].contiguous()
+        
+    #     batch_size, seq_len, vocab_size = shift_logits.shape
+    #     flat_logits = shift_logits.view(-1, vocab_size)
+    #     flat_labels = shift_labels.view(-1)
+        
+    #     # 计算每个token的loss (不忽略-100)
+    #     token_losses = loss_fct(flat_logits, flat_labels)  # (batch_size * seq_len)
+    #     token_losses = token_losses.view(batch_size, seq_len)  # (batch_size, seq_len)
+        
+    #     # 只计算非-100标签的loss
+    #     valid_mask = (shift_labels != -100).float()
+        
+    #     # 样本级平均loss (每个样本的有效token平均loss)
+    #     sample_losses = (token_losses * valid_mask).sum(dim=1) / (valid_mask.sum(dim=1) + 1e-8)
+        
+    #     # 检测异常loss
+    #     self._check_anomalous_loss(sample_losses, inputs)
+        
+    #     # 返回批次平均loss用于优化
+    #     total_loss = sample_losses.mean()
+        
+    #     return (total_loss, outputs) if return_outputs else total_loss
+    
+    # def _check_anomalous_loss(self, sample_losses, inputs):
+    #     """
+    #     检测并打印异常loss样本信息
+    #     """
+    #     batch_size = sample_losses.shape[0]
+        
+    #     for i in range(batch_size):
+    #         sample_loss = sample_losses[i].item()
             
-            rank0_print(f"📊 [STEP {self.state.global_step}] Loss Statistics:")
-            rank0_print(f"   Mean: {mean_loss:.4f}, Max: {max_loss:.4f}, Min: {min_loss:.4f}, Std: {std_loss:.4f}")
-            rank0_print(f"   High loss samples (>{self.loss_threshold}): {(sample_losses > self.loss_threshold).sum().item()}/{batch_size}")
+    #         # 检测NaN或Inf
+    #         if torch.isnan(sample_losses[i]) or torch.isinf(sample_losses[i]):
+    #             rank0_print(f"🚨 [STEP {self.state.global_step}] CRITICAL: NaN/Inf loss detected!")
+    #             rank0_print(f"   Sample {i}: loss = {sample_loss}")
+    #             self._print_sample_debug_info(inputs, i)
+    #             continue
+                
+    #         # 检测异常高loss
+    #         if sample_loss > self.loss_threshold:
+    #             rank0_print(f"⚠️  [STEP {self.state.global_step}] HIGH LOSS detected!")
+    #             rank0_print(f"   Sample {i}: loss = {sample_loss:.4f} (threshold: {self.loss_threshold})")
+    #             self._print_sample_debug_info(inputs, i)
+                
+    #     # 定期打印loss统计
+    #     self.step_count += 1
+    #     if self.step_count % self.sample_loss_log_interval == 0:
+    #         mean_loss = sample_losses.mean().item()
+    #         max_loss = sample_losses.max().item()
+    #         min_loss = sample_losses.min().item()
+    #         std_loss = sample_losses.std().item()
+            
+    #         rank0_print(f"📊 [STEP {self.state.global_step}] Loss Statistics:")
+    #         rank0_print(f"   Mean: {mean_loss:.4f}, Max: {max_loss:.4f}, Min: {min_loss:.4f}, Std: {std_loss:.4f}")
+    #         rank0_print(f"   High loss samples (>{self.loss_threshold}): {(sample_losses > self.loss_threshold).sum().item()}/{batch_size}")
     
     def _print_sample_debug_info(self, inputs, sample_idx):
         """
@@ -383,8 +386,6 @@ class FragTrainer(Trainer):
         else:
             super(FragTrainer, self)._save(output_dir, state_dict)
 
-
-
 def safe_save_model_for_hf_trainer(trainer: transformers.Trainer,
                                    output_dir: str):
     """Collects the state dict and dump to disk."""
@@ -492,6 +493,7 @@ def train(attn_implementation=None):
     
     # Set random seeds
     transformers.trainer_utils.set_seed(training_args.seed)
+    # transformers.trainer_utils.set_seed(training_args.seed + training_args.local_rank)
     
     # Create datasets and data collator
     #Load tokenizers
@@ -585,6 +587,13 @@ def train(attn_implementation=None):
     if data_args.dataset_valid_config is not None:
         print(f"Evaluation dataset size: {len(data_module['eval_dataset'])}")
     
+    # save model config before training
+    if training_args.lora_enable:
+        if training_args.local_rank == 0 or training_args.local_rank == -1:
+            model.config.use_cache = True
+            model.config.gradient_checkpointing = True
+            model.config.save_pretrained(training_args.output_dir)
+
     # Start training
     if resume_from_checkpoint:
         print("Resuming training from checkpoint...")
