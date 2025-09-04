@@ -133,6 +133,7 @@ class FragRefDataset(torch.utils.data.Dataset):
     # 以Motif数据的Referring_Class为例
     def _load_annotations(self, ann_file):
         data_infos = []
+        dataset_idx = 0
         for item in ann_file:
             for motif in item["fragments"]:  # 一个item中可能包含多个motif类别
                 for frag in motif["frags"]:  # 一个motif类别中可能包含多个fragment
@@ -150,6 +151,11 @@ class FragRefDataset(torch.utils.data.Dataset):
                     data_item["end_pos"] = frag["end_position"]
                     data_item["length"] = frag["length"]
                     data_item["frag_sequence"] = frag["sequence"]
+
+                    # debug info
+                    data_item["dataset_idx"] = dataset_idx
+                    dataset_idx += 1 
+
                     data_infos.append(data_item)
         return data_infos
     
@@ -169,20 +175,52 @@ class FragRefDataset(torch.utils.data.Dataset):
         answer = answer_template.format(class_name=answer) if self.answer_template is not None else answer
         return conversation, answer
     
-    def process_data(self, data_item):
+    def __len__(self) -> int:
+        return len(self.data_infos)
+    
+    def __getitem__(self, idx: int) -> Dict[str, str]:
+        data_item = self.data_infos[idx]
+
         sequence = data_item["sequence"]
-        answer = data_item["category"] if self.task_type == "referring_class" else data_item["description"]
         start_pos = data_item["start_pos"]
         end_pos = data_item["end_pos"]
+
+        # 长度处理 0904修改
         if len(sequence) > self.max_sequence_length and not self.filter_sequence:
-            start = random.randint(0, len(sequence) - self.max_sequence_length)
-            sequence = sequence[start:start + self.max_sequence_length]
-            start_new = start_pos - start
-            end_new = end_pos - start + 1
-            position_ref = [start_new, end_new]
+            fragment_len = end_pos - start_pos + 1
+
+            if fragment_len > self.max_sequence_length:
+                # 当片段比窗口还长，截断片段自身
+                start = start_pos
+                sequence = sequence[start_pos : start_pos + self.max_sequence_length]
+                start_new = 0
+                end_new = self.max_sequence_length
+            else:
+                # 片段比窗口短，随机截断序列，但保证功能片段完整
+
+                # 截断窗口的起点不能晚于 fragment 的起点，否则会切掉 fragment 的开头
+                max_start = start_pos
+
+                # 截断窗口的起点不能早于某个位置，否则窗口的结尾会切掉 fragment 的结尾
+                min_start = end_pos - self.max_sequence_length + 1
+                min_start = max(0, min_start)
+
+                # 有效范围 [min_start, max_start] 内随机选择一个起点并截断
+                assert min_start <= max_start, f"min_start: {min_start}, max_start: {max_start}, frag_len: {fragment_len}, max_len: {self.max_sequence_length}, seq_len: {len(sequence)}"                
+                start = random.randint(min_start, max_start)
+
+                sequence = sequence[start : start + self.max_sequence_length]
+                start_new = start_pos - start
+                end_new = end_pos - start + 1
+
         else:
             start = 0
-            position_ref = [start_pos, end_pos+1]
+            start_new = start_pos
+            end_new = end_pos + 1
+        
+        answer = data_item["category"] if self.task_type == "referring_class" else data_item["description"]
+        position_ref = [start_new, end_new]
+
         conversation, answer = self.create_conversations(sequence, answer)
         position_grd = None
         return {
@@ -192,43 +230,8 @@ class FragRefDataset(torch.utils.data.Dataset):
                 "position_ref": position_ref,
                 "position_grd": position_grd,
                 "start": start,
-            }
-
-        
-    def __len__(self) -> int:
-        return len(self.data_infos)
-    
-    def __getitem__(self, idx: int) -> Dict[str, str]:
-        data_item = self.data_infos[idx]
-        sequence = data_item["sequence"]
-        start_pos = data_item["start_pos"]
-        end_pos = data_item["end_pos"]
-        # 确保截断sequence时，保证fragment的完整性
-        if len(sequence) > self.max_sequence_length and not self.filter_sequence:
-            start = random.randint(0, len(sequence) - self.max_sequence_length)
-            sequence = sequence[start:start + self.max_sequence_length]
-            start_new = start_pos - start
-            end_new = end_pos - start + 1
-        else:
-            start_new = start_pos
-            end_new = end_pos + 1
-        while start_new < 0 or end_new > len(sequence):
-            idx = random.randint(0, len(self.data_infos) - 1)
-            data_item = self.data_infos[idx]
-            sequence = data_item["sequence"]
-            start_pos = data_item["start_pos"]
-            end_pos = data_item["end_pos"]
-            if len(sequence) > self.max_sequence_length and not self.filter_sequence:
-                start = random.randint(0, len(sequence) - self.max_sequence_length)
-                sequence = sequence[start:start + self.max_sequence_length]
-                start_new = start_pos - start
-                end_new = end_pos - start + 1
-            else:
-                start_new = start_pos
-                end_new = end_pos + 1
-        return self.process_data(data_item)
-    
-
+                "dataset_idx": data_item["dataset_idx"]
+        }
 
 # referring description
 

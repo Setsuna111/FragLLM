@@ -124,12 +124,18 @@ class FunctionDataset(torch.utils.data.Dataset):
     # 以Motif数据的Referring_Class为例
     def _load_annotations(self, ann_file):
         data_infos = []
+        dataset_idx = 0
         for i in range(len(ann_file)):
             data_item = {}
             data_item["sequence"] = ann_file.iloc[i]["sequence"]
             data_item["fullname"] = ann_file.iloc[i]["Full Name"]
             data_item["taxon"] = ann_file.iloc[i]["taxon"]
             data_item["description"] = ann_file.iloc[i]["function"]
+
+            # debug info
+            data_item["dataset_idx"] = dataset_idx
+            dataset_idx += 1 
+            
             data_infos.append(data_item)
         return data_infos
     
@@ -170,6 +176,7 @@ class FunctionDataset(torch.utils.data.Dataset):
                 "position_ref": position_ref,
                 "position_grd": position_grd,
                 "start": start,
+                "dataset_idx": data_item["dataset_idx"]
             }
 
         

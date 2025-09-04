@@ -188,6 +188,121 @@ def get_peft_state_non_lora_maybe_zero_3(named_params, require_grad_only=True):
 
 class FragTrainer(Trainer):
     """Custom Trainer for Esm2LlamaInstructForCausalLM with fragment support."""
+    
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Loss monitoring configuration
+        self.loss_threshold = 10.0  # 可配置的loss阈值
+        self.nan_inf_threshold = float('inf')  # NaN/Inf检测
+        self.sample_loss_log_interval = 100  # 每100步打印一次样本级loss统计
+        self.step_count = 0
+        
+    def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
+        """
+        重写compute_loss方法，添加样本级loss监控
+        """
+        if "labels" not in inputs:
+            return super().compute_loss(model, inputs, return_outputs=return_outputs)
+            
+        # 获取原始输出
+        outputs = model(**inputs)
+        logits = outputs.get("logits")
+        labels = inputs["labels"]
+        
+        if logits is None:
+            return super().compute_loss(model, inputs, return_outputs=return_outputs)
+            
+        # 计算样本级loss
+        loss_fct = nn.CrossEntropyLoss(reduction='none')  # 不进行reduction，保持样本维度
+        
+        # Flatten for loss calculation
+        shift_logits = logits[..., :-1, :].contiguous()
+        shift_labels = labels[..., 1:].contiguous()
+        
+        batch_size, seq_len, vocab_size = shift_logits.shape
+        flat_logits = shift_logits.view(-1, vocab_size)
+        flat_labels = shift_labels.view(-1)
+        
+        # 计算每个token的loss (不忽略-100)
+        token_losses = loss_fct(flat_logits, flat_labels)  # (batch_size * seq_len)
+        token_losses = token_losses.view(batch_size, seq_len)  # (batch_size, seq_len)
+        
+        # 只计算非-100标签的loss
+        valid_mask = (shift_labels != -100).float()
+        
+        # 样本级平均loss (每个样本的有效token平均loss)
+        sample_losses = (token_losses * valid_mask).sum(dim=1) / (valid_mask.sum(dim=1) + 1e-8)
+        
+        # 检测异常loss
+        self._check_anomalous_loss(sample_losses, inputs)
+        
+        # 返回批次平均loss用于优化
+        total_loss = sample_losses.mean()
+        
+        return (total_loss, outputs) if return_outputs else total_loss
+    
+    def _check_anomalous_loss(self, sample_losses, inputs):
+        """
+        检测并打印异常loss样本信息
+        """
+        batch_size = sample_losses.shape[0]
+        
+        for i in range(batch_size):
+            sample_loss = sample_losses[i].item()
+            
+            # 检测NaN或Inf
+            if torch.isnan(sample_losses[i]) or torch.isinf(sample_losses[i]):
+                rank0_print(f"🚨 [STEP {self.state.global_step}] CRITICAL: NaN/Inf loss detected!")
+                rank0_print(f"   Sample {i}: loss = {sample_loss}")
+                self._print_sample_debug_info(inputs, i)
+                continue
+                
+            # 检测异常高loss
+            if sample_loss > self.loss_threshold:
+                rank0_print(f"⚠️  [STEP {self.state.global_step}] HIGH LOSS detected!")
+                rank0_print(f"   Sample {i}: loss = {sample_loss:.4f} (threshold: {self.loss_threshold})")
+                self._print_sample_debug_info(inputs, i)
+                
+        # 定期打印loss统计
+        self.step_count += 1
+        if self.step_count % self.sample_loss_log_interval == 0:
+            mean_loss = sample_losses.mean().item()
+            max_loss = sample_losses.max().item()
+            min_loss = sample_losses.min().item()
+            std_loss = sample_losses.std().item()
+            
+            rank0_print(f"📊 [STEP {self.state.global_step}] Loss Statistics:")
+            rank0_print(f"   Mean: {mean_loss:.4f}, Max: {max_loss:.4f}, Min: {min_loss:.4f}, Std: {std_loss:.4f}")
+            rank0_print(f"   High loss samples (>{self.loss_threshold}): {(sample_losses > self.loss_threshold).sum().item()}/{batch_size}")
+    
+    def _print_sample_debug_info(self, inputs, sample_idx):
+        """
+        打印样本的调试信息
+        """
+        try:
+            # 基本信息
+            if "input_ids" in inputs:
+                input_ids = inputs["input_ids"][sample_idx]
+                seq_len = input_ids.shape[0]
+                rank0_print(f"   Sequence length: {seq_len}")
+                
+            if "labels" in inputs:
+                labels = inputs["labels"][sample_idx]
+                valid_labels = (labels != -100).sum().item()
+                rank0_print(f"   Valid labels: {valid_labels}")
+                
+            if "protein_input_ids" in inputs:
+                protein_ids = inputs["protein_input_ids"][sample_idx]
+                protein_len = (protein_ids != 0).sum().item()  # 假设0是padding
+                rank0_print(f"   Protein sequence length: {protein_len}")
+                
+            if "position_refs" in inputs and inputs["position_refs"]:
+                position_ref = inputs["position_refs"][sample_idx] if sample_idx < len(inputs["position_refs"]) else None
+                rank0_print(f"   Fragment position: {position_ref}")
+                
+        except Exception as e:
+            rank0_print(f"   Error printing debug info: {str(e)}")
+
     def create_optimizer(self):
         """Create optimizer with different learning rates for different components."""
         if is_sagemaker_mp_enabled():
