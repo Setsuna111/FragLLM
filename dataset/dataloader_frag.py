@@ -84,7 +84,7 @@ import copy
 import numpy as np
 from dataclasses import dataclass, field
 from .templates import *
-
+import bisect
 class FragDataCollator:
     def __init__(self, 
             sequence_tokenizer: PreTrainedTokenizer,
@@ -181,6 +181,7 @@ class FragDataCollator:
 
         elif self.mode == "inference":
             return {
+                "sequences": sequences,
                 "protein_input_ids": sequence_input_ids, 
                 "protein_attention_mask": sequence_attention_mask, 
                 "input_ids": prompt_input_ids, 
@@ -242,12 +243,22 @@ class HybridDatasetBase(torch.utils.data.Dataset):
         self.kwargs = kwargs
         self.dataset_list = []
         self.split = split
+        self.all_datasets = self.create_datasets()
         self.sample_rate = np.array([float(x) for x in sample_rate.split(",")]) if sample_rate is not None else np.array([1] * len(self.dataset_list))
 
         self.sample_rate = self.sample_rate.astype(np.float64)
         self.sample_rate /= self.sample_rate.sum()
-        self.all_datasets = self.create_datasets()
         self.epoch_samples = epoch_samples if epoch_samples is not None else sum(len(item) for item in self.all_datasets)
+        self.cumulative_sizes = self.cumsum(self.all_datasets)
+
+    @staticmethod
+    def cumsum(sequence):
+        r, s = [], 0
+        for e in sequence:
+            l = len(e)
+            r.append(l + s)
+            s += l
+        return r
     
     def create_datasets(self):
         for ds in self.data_list:
@@ -268,18 +279,32 @@ class HybridDatasetBase(torch.utils.data.Dataset):
                     split=self.split, 
                     max_sequence_length=self.max_sequence_length, 
                     **self.kwargs)
+            print(f"Creating dataset {ds} with length {len(dataset)}")
             self.dataset_list.append(dataset)
         return self.dataset_list
     
     def __len__(self):
-        return self.epoch_samples
+        return self.cumulative_sizes[-1]
     
+    # def __getitem__(self, idx):
+    #     dataset_idx = np.random.choice(len(self.dataset_list), p=self.sample_rate)
+    #     selected_dataset = self.all_datasets[dataset_idx]
+    #     index = np.random.choice(len(selected_dataset))
+    #     data = selected_dataset[index]
+    #     return data
     def __getitem__(self, idx):
-        dataset_idx = np.random.choice(len(self.dataset_list), p=self.sample_rate)
-        selected_dataset = self.all_datasets[dataset_idx]
-        index = np.random.choice(len(selected_dataset))
-        data = selected_dataset[index]
-        return data
+        if idx < 0:
+            if -idx > len(self):
+                raise ValueError(
+                    "absolute value of index should not exceed dataset length"
+                )
+            idx = len(self) + idx
+        dataset_idx = bisect.bisect_right(self.cumulative_sizes, idx)
+        if dataset_idx == 0:
+            sample_idx = idx
+        else:
+            sample_idx = idx - self.cumulative_sizes[dataset_idx - 1]
+        return self.all_datasets[dataset_idx][sample_idx]
     
 
 class HybridReferringDataset(HybridDatasetBase):
@@ -477,7 +502,7 @@ def build_frag_dataset(
         raise NotImplementedError(f"Invalid dataset type: {dataset_type}")
     return dataset
 
-
+"""Based on ConcatDataset"""
 # def make_multitask_dataset(data_args):
 #     dataset_configs_train = data_args.dataset_train_config.split("||")
 #     dataset_config_train = dataset_configs_train[0] if len(dataset_configs_train) == 1 else dataset_configs_train
@@ -495,7 +520,7 @@ def build_frag_dataset(
 #                 eval_dataset=eval_dataset,
 #                 data_collator=data_collator)
 
-
+"""Based on HybridDatasetBase"""
 def make_multitask_dataset(data_args):
     train_dataset = HybridTrainDataset(
         root_dir=data_args.root_dir,
