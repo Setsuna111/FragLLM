@@ -109,7 +109,8 @@ for inputs in tqdm(dataloader):
 data= {'generated': generated, 'function':functions, 'dataset_idxs':dataset_idxs}
 df = pd.DataFrame(data)
 print("length of data: ", len(df))
-df.to_csv(args.save_results_path, index=False, mode='a')
+write_header = not os.path.exists(args.save_results_path)
+df.to_csv(args.save_results_path, index=False, mode='a', header=write_header)
 
 # if torch.distributed.is_initialized():  
 #     torch.distributed.barrier() 
