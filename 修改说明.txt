@@ -1,3 +1,7 @@
+0905 djy
+1. scripts/train_llama.py中注释了transformers.trainer_utils.set_seed(training_args.seed)
+2. dataset/dataloader_refferring.py中修正了ActDesc任务数据加载时读取的数据集名称
+
 0904 djy
 1. 更新了requirements.text
 2. README.md中添加了环境安装的流程
