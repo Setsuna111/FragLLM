@@ -12,10 +12,16 @@ import torch
 import os
 import argparse
 from eval.ddp import *
+from scripts import utils_argparse
 
 argParser = argparse.ArgumentParser()
 argParser.add_argument("--model_path", help="path to the prot2text model")
-argParser.add_argument("--temperature", default=0.0, type=float)
+argParser.add_argument("--temperature", default=1.0, type=float)
+argParser.add_argument("--num_beams", default=1, type=int)
+argParser.add_argument("--top_p", default=1.0, type=float)
+argParser.add_argument("--top_k", default=50, type=int)
+argParser.add_argument("--length_penalty", default=1.0, type=float)
+argParser.add_argument("--max_new_tokens", default=512, type=int)
 argParser.add_argument("--root_dir", help="root folder of the data")
 argParser.add_argument("--data_name", help="data name")
 argParser.add_argument("--split", help="train, test or eval split?")
@@ -60,7 +66,7 @@ data_collator = FragDataCollator(
 distributed_sampler = DistributedSampler(eval_dataset, rank=args.rank, shuffle=False)
 dataloader = DataLoader(eval_dataset, batch_size=batch_size, num_workers=0,
                             sampler=distributed_sampler, collate_fn=data_collator)
-
+print("length of eval_dataset: ", len(eval_dataset))
 if torch.distributed.is_initialized():
     if torch.distributed.get_rank()==0:
         if os.path.exists(args.save_results_path):
@@ -71,11 +77,13 @@ else:
 
 generated = list()
 functions = list()
-
+dataset_idxs = list()
 for inputs in tqdm(dataloader):
     # inputs = inputs.to_dict()
     functions += tokenizer.batch_decode(inputs['answer_input_ids'], skip_special_tokens=True)
     inputs = {k: v.to(device=device, non_blocking=True) if hasattr(v, 'to') else v for k, v in inputs.items()}
+    dataset_idxs += inputs["dataset_idxs"]
+
     tok_ids = model.generate(inputs=None, 
                             input_ids=inputs["input_ids"],
                             attention_mask=inputs["attention_mask"],
@@ -83,19 +91,24 @@ for inputs in tqdm(dataloader):
                             protein_attention_mask=inputs["protein_attention_mask"],
                             protein_inputs_embeds=None,
                             position_refs=inputs["position_refs"],
-                            num_beams=1,
+                            num_beams=args.num_beams,
                             early_stopping=False,
                             no_repeat_ngram_size=None,
-                            length_penalty=1.0,
+                            eos_token_id=128009, 
+                            pad_token_id=128002,
+                            length_penalty=args.length_penalty,
                             do_sample=True if args.temperature > 0 else False,
                             temperature=args.temperature,
-                            max_new_tokens=512,
-                            use_cache=True
+                            max_new_tokens=args.max_new_tokens,
+                            use_cache=True,
+                            top_p=args.top_p,
+                            top_k=args.top_k 
                         )
     generated += tokenizer.batch_decode(tok_ids, skip_special_tokens=True)
 
-data= {'generated': generated, 'function':functions}
+data= {'generated': generated, 'function':functions, 'dataset_idxs':dataset_idxs}
 df = pd.DataFrame(data)
+print("length of data: ", len(df))
 df.to_csv(args.save_results_path, index=False, mode='a')
 
 # if torch.distributed.is_initialized():  
