@@ -361,7 +361,7 @@ def train(attn_implementation=None):
         json.dump(args_dict, f, indent=4, ensure_ascii=False, default=custom_serializer)
     
     # Set random seeds
-    transformers.trainer_utils.set_seed(training_args.seed)
+    # transformers.trainer_utils.set_seed(training_args.seed)
     
     # Create datasets and data collator
     #Load tokenizers
