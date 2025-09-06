@@ -8,9 +8,9 @@
 # ======================================
 
 # Model and data paths
-MODEL_PATH="/home/lfj/projects_dir/FragLLM/checkpoints/test_load_stage1_only_motifdesc_lora_fast_save_after_data_fix/checkpoint-1100_merge/"
+MODEL_PATH="/home/lfj/projects_dir/FragLLM/checkpoints/test_load_stage1_only_motifdesc_lora_fast_save_test_all_desc/checkpoint-3000_merge/"
 ROOT_DIR="./data"
-RESULTS_DIR="./results/results_reference_fast_save_test_0904"
+RESULTS_DIR="./results/results_reference_all_desc_0905_3000"
 
 # Evaluation parameters
 SPLIT="test"
@@ -34,8 +34,8 @@ MASTER_PORT=24989     # Master port for distributed training
 # DATASETS="Pro2Text"                                    # Single function dataset
 # DATASETS="ActRefClass,ActRefDesc"                      # Multiple reference datasets  
 # DATASETS="Pro2Text,ActRefClass,MotifRefDesc"          # Mixed function and reference datasets
-# DATASETS="MotifRefDesc,ActRefClass"                      # Default: two reference datasets
-DATASETS="MotifRefDesc"
+DATASETS="MotifRefDesc,ActRefClass"                      # Default: two small reference datasets
+# DATASETS="MotifRefDesc,ActRefDesc,BindIRefDesc,DomRefDesc,EvoRefDesc"  # All five reference desc datasets
 
 
 # ======================================

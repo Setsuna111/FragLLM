@@ -253,8 +253,6 @@ class HybridDatasetBase(torch.utils.data.Dataset):
         self.epoch_samples = epoch_samples if epoch_samples is not None else sum(len(item) for item in self.all_datasets)
         self.cumulative_sizes = self.cumsum(self.all_datasets)
 
-        print("self.cumulative_sizes: ", self.cumulative_sizes)  # 0904 debug
-
     @staticmethod
     def cumsum(sequence):
         r, s = [], 0
@@ -291,12 +289,30 @@ class HybridDatasetBase(torch.utils.data.Dataset):
         return self.cumulative_sizes[-1]
     
     # def __getitem__(self, idx):
+    #     # np.random.seed()  # 0904 debug
     #     dataset_idx = np.random.choice(len(self.dataset_list), p=self.sample_rate)
     #     selected_dataset = self.all_datasets[dataset_idx]
     #     index = np.random.choice(len(selected_dataset))
     #     data = selected_dataset[index]
-    #     # print(f"Fetching item {index} from dataset {dataset_idx}")  # 0904 debug
+    #     print(f"Fetching item {index} from dataset {dataset_idx}")  # 0904 debug
+
+    #     # 0904 debug
+    #     pid = os.getpid()
+    #     # 获取各个库的RNG状态
+        
+    #     torch_rng_state = torch.get_rng_state()
+
+    #     print(f"[PID: {pid}, Item Idx: {idx}] --- RNG States ---")
+    #     # NumPy的状态是一个元组，通常包含(字符串, 密钥数组, pos, has_gauss, cached_gaussian)
+    #     # 我们只打印密钥数组的前几个元素作为指纹
+    #     numpy_rng_state = np.random.get_state()
+    #     print(f"  > NumPy state fingerprint: {numpy_rng_state[1][:5]}") 
+    #     # Torch的状态是一个ByteTensor，我们打印它的sum和前几个元素作为指纹
+    #     print(f"  > Torch state fingerprint: sum={torch_rng_state.sum()}, val={torch_rng_state[:10].tolist()}")
+    #     print("-" * 20)
+        
     #     return data
+
     def __getitem__(self, idx):
         if idx < 0:
             if -idx > len(self):

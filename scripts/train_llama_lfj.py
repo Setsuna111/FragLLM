@@ -10,12 +10,16 @@ import sys
 sys.path.append("..")
 sys.path.append(".")
 
+import os
+# os.environ["CUDA_VISIBLE_DEVICES"] = "3"
+
 import pathlib
 import transformers
 import random
 import torch
-import os
+
 import json
+import numpy as np
 
 from torch.utils.data import random_split, DataLoader
 from functools import partial
@@ -28,7 +32,7 @@ from transformers import TrainerCallback, TrainingArguments, TrainerState, Train
 from transformers import EsmModel, LlamaForCausalLM
 from peft import get_peft_model, LoraConfig, PeftModel
 import logging
-from models.protein_llama import *
+from models.protein_llama_lfj import *
 from dataset.dataloader_refferring import FragRefDataset
 from dataset.dataloader_frag import FragDataCollator, make_multitask_dataset
 local_rank = None
@@ -128,6 +132,10 @@ class FragTrainingArguments(TrainingArguments):
     lora_bias: str = "none"
     lora_target_modules: str = "self_attn.q_proj,self_attn.k_proj,self_attn.v_proj,self_attn.o_proj,mlp.gate_proj,mlp.up_proj,mlp.down_proj"
 
+    max_grad_norm: float = field(
+        default=0.5, 
+        metadata={"help": "Max gradient norm (for gradient clipping)."}
+    )
 
 def maybe_zero_3(param, ignore_status=False, name=None):
     from deepspeed import zero
@@ -187,8 +195,6 @@ def get_peft_state_non_lora_maybe_zero_3(named_params, require_grad_only=True):
     return to_return
 
 
-
-
 class FragTrainer(Trainer):
     """Custom Trainer for Esm2LlamaInstructForCausalLM with fragment support."""
     
@@ -200,83 +206,83 @@ class FragTrainer(Trainer):
         self.sample_loss_log_interval = 100  # 每100步打印一次样本级loss统计
         self.step_count = 0
     
-    # def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
-    #     """
-    #     重写compute_loss方法，添加样本级loss监控
-    #     """
-    #     if "labels" not in inputs:
-    #         return super().compute_loss(model, inputs, return_outputs=return_outputs)
+    def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
+        """
+        重写compute_loss方法，添加样本级loss监控
+        """
+        if "labels" not in inputs:
+            return super().compute_loss(model, inputs, return_outputs=return_outputs)
             
-    #     # 获取原始输出
-    #     outputs = model(**inputs)
-    #     logits = outputs.get("logits")
-    #     labels = inputs["labels"]
+        # 获取原始输出
+        outputs = model(**inputs)
+        logits = outputs.get("logits")
+        labels = inputs["labels"]
         
-    #     if logits is None:
-    #         return super().compute_loss(model, inputs, return_outputs=return_outputs)
+        if logits is None:
+            return super().compute_loss(model, inputs, return_outputs=return_outputs)
             
-    #     # 计算样本级loss
-    #     loss_fct = nn.CrossEntropyLoss(reduction='none')  # 不进行reduction，保持样本维度
+        # 计算样本级loss
+        loss_fct = nn.CrossEntropyLoss(reduction='none')  # 不进行reduction，保持样本维度
         
-    #     # Flatten for loss calculation
-    #     shift_logits = logits[..., :-1, :].contiguous()
-    #     shift_labels = labels[..., 1:].contiguous()
+        # Flatten for loss calculation
+        shift_logits = logits[..., :-1, :].contiguous()
+        shift_labels = labels[..., 1:].contiguous()
         
-    #     batch_size, seq_len, vocab_size = shift_logits.shape
-    #     flat_logits = shift_logits.view(-1, vocab_size)
-    #     flat_labels = shift_labels.view(-1)
+        batch_size, seq_len, vocab_size = shift_logits.shape
+        flat_logits = shift_logits.view(-1, vocab_size)
+        flat_labels = shift_labels.view(-1)
         
-    #     # 计算每个token的loss (不忽略-100)
-    #     token_losses = loss_fct(flat_logits, flat_labels)  # (batch_size * seq_len)
-    #     token_losses = token_losses.view(batch_size, seq_len)  # (batch_size, seq_len)
+        # 计算每个token的loss (不忽略-100)
+        token_losses = loss_fct(flat_logits, flat_labels)  # (batch_size * seq_len)
+        token_losses = token_losses.view(batch_size, seq_len)  # (batch_size, seq_len)
         
-    #     # 只计算非-100标签的loss
-    #     valid_mask = (shift_labels != -100).float()
+        # 只计算非-100标签的loss
+        valid_mask = (shift_labels != -100).float()
         
-    #     # 样本级平均loss (每个样本的有效token平均loss)
-    #     sample_losses = (token_losses * valid_mask).sum(dim=1) / (valid_mask.sum(dim=1) + 1e-8)
+        # 样本级平均loss (每个样本的有效token平均loss)
+        sample_losses = (token_losses * valid_mask).sum(dim=1) / (valid_mask.sum(dim=1) + 1e-8)
         
-    #     # 检测异常loss
-    #     self._check_anomalous_loss(sample_losses, inputs)
+        # 检测异常loss
+        self._check_anomalous_loss(sample_losses, inputs)
         
-    #     # 返回批次平均loss用于优化
-    #     total_loss = sample_losses.mean()
+        # 返回批次平均loss用于优化
+        total_loss = sample_losses.mean()
         
-    #     return (total_loss, outputs) if return_outputs else total_loss
+        return (total_loss, outputs) if return_outputs else total_loss
     
-    # def _check_anomalous_loss(self, sample_losses, inputs):
-    #     """
-    #     检测并打印异常loss样本信息
-    #     """
-    #     batch_size = sample_losses.shape[0]
+    def _check_anomalous_loss(self, sample_losses, inputs):
+        """
+        检测并打印异常loss样本信息
+        """
+        batch_size = sample_losses.shape[0]
         
-    #     for i in range(batch_size):
-    #         sample_loss = sample_losses[i].item()
+        for i in range(batch_size):
+            sample_loss = sample_losses[i].item()
             
-    #         # 检测NaN或Inf
-    #         if torch.isnan(sample_losses[i]) or torch.isinf(sample_losses[i]):
-    #             rank0_print(f"🚨 [STEP {self.state.global_step}] CRITICAL: NaN/Inf loss detected!")
-    #             rank0_print(f"   Sample {i}: loss = {sample_loss}")
-    #             self._print_sample_debug_info(inputs, i)
-    #             continue
+            # 检测NaN或Inf
+            if torch.isnan(sample_losses[i]) or torch.isinf(sample_losses[i]):
+                rank0_print(f"🚨 [STEP {self.state.global_step}] CRITICAL: NaN/Inf loss detected!")
+                rank0_print(f"   Sample {i}: loss = {sample_loss}")
+                self._print_sample_debug_info(inputs, i)
+                continue
                 
-    #         # 检测异常高loss
-    #         if sample_loss > self.loss_threshold:
-    #             rank0_print(f"⚠️  [STEP {self.state.global_step}] HIGH LOSS detected!")
-    #             rank0_print(f"   Sample {i}: loss = {sample_loss:.4f} (threshold: {self.loss_threshold})")
-    #             self._print_sample_debug_info(inputs, i)
+            # 检测异常高loss
+            if sample_loss > self.loss_threshold:
+                rank0_print(f"⚠️  [STEP {self.state.global_step}] HIGH LOSS detected!")
+                rank0_print(f"   Sample {i}: loss = {sample_loss:.4f} (threshold: {self.loss_threshold})")
+                self._print_sample_debug_info(inputs, i)
                 
-    #     # 定期打印loss统计
-    #     self.step_count += 1
-    #     if self.step_count % self.sample_loss_log_interval == 0:
-    #         mean_loss = sample_losses.mean().item()
-    #         max_loss = sample_losses.max().item()
-    #         min_loss = sample_losses.min().item()
-    #         std_loss = sample_losses.std().item()
+        # 定期打印loss统计
+        self.step_count += 1
+        if self.step_count % self.sample_loss_log_interval == 0:
+            mean_loss = sample_losses.mean().item()
+            max_loss = sample_losses.max().item()
+            min_loss = sample_losses.min().item()
+            std_loss = sample_losses.std().item()
             
-    #         rank0_print(f"📊 [STEP {self.state.global_step}] Loss Statistics:")
-    #         rank0_print(f"   Mean: {mean_loss:.4f}, Max: {max_loss:.4f}, Min: {min_loss:.4f}, Std: {std_loss:.4f}")
-    #         rank0_print(f"   High loss samples (>{self.loss_threshold}): {(sample_losses > self.loss_threshold).sum().item()}/{batch_size}")
+            rank0_print(f"📊 [STEP {self.state.global_step}] Loss Statistics:")
+            rank0_print(f"   Mean: {mean_loss:.4f}, Max: {max_loss:.4f}, Min: {min_loss:.4f}, Std: {std_loss:.4f}")
+            rank0_print(f"   High loss samples (>{self.loss_threshold}): {(sample_losses > self.loss_threshold).sum().item()}/{batch_size}")
     
     def _print_sample_debug_info(self, inputs, sample_idx):
         """
@@ -380,6 +386,10 @@ class FragTrainer(Trainer):
                         torch.save(non_lora_state_dict, os.path.join(output_dir, 'non_lora_trainables.bin'))
                         print(f"Saved non-LoRA trainable weights to {output_dir}/non_lora_trainables.bin")
 
+                    self.model.config.use_cache = True
+                    self.model.config.gradient_checkpointing = True
+                    self.model.config.save_pretrained(output_dir)
+
     def _save(self, output_dir: Optional[str] = None, state_dict=None):
         if getattr(self.args, 'tune_frag_adapter', False):
             pass
@@ -429,6 +439,7 @@ def train(attn_implementation=None):
         (FragModelArguments, FragDataArguments, FragTrainingArguments)
     )
     model_args, data_args, training_args = parser.parse_args_into_dataclasses()
+    # training_args.seed = training_args.seed + training_args.local_rank  # 0905 debug
     local_rank = training_args.local_rank
 
     # Determine torch dtype
@@ -438,7 +449,6 @@ def train(attn_implementation=None):
         torch_dtype = torch.float16
     else:
         torch_dtype = torch.float32
-
 
     # Load base models
     model = ProteinLlamaForCausalLM.from_pretrained(
@@ -458,7 +468,6 @@ def train(attn_implementation=None):
             def make_inputs_require_grad(module, input, output):
                 output.requires_grad_(True)
             model.get_input_embeddings().register_forward_hook(make_inputs_require_grad)
-
 
     if training_args.lora_enable:
         print("Initializing LoRA adapter")
@@ -494,6 +503,11 @@ def train(attn_implementation=None):
     # Set random seeds
     transformers.trainer_utils.set_seed(training_args.seed)
     # transformers.trainer_utils.set_seed(training_args.seed + training_args.local_rank)
+    # import numpy as np
+    # np.random.seed(training_args.seed + training_args.local_rank)
+    # print("***"*20, training_args.seed + training_args.local_rank)
+    # numpy_rng_state = np.random.get_state()
+    # print(f"  > NumPy state fingerprint: {numpy_rng_state[1][:5]}") 
     
     # Create datasets and data collator
     #Load tokenizers
@@ -539,6 +553,10 @@ def train(attn_implementation=None):
     data_args.sequence_tokenizer = esm_tokenizer
     data_args.llm_tokenizer = llama_tokenizer
     data_module = make_multitask_dataset(data_args)
+
+    # numpy_rng_state = np.random.get_state()
+    # print("***"*80, 'dataset')
+    # print(f"  > NumPy state fingerprint: {numpy_rng_state[1][:5]}") 
     
     # Check for existing checkpoints and load non-LoRA weights if resuming
     checkpoints = list(pathlib.Path(training_args.output_dir).glob("checkpoint-*"))
@@ -587,12 +605,9 @@ def train(attn_implementation=None):
     if data_args.dataset_valid_config is not None:
         print(f"Evaluation dataset size: {len(data_module['eval_dataset'])}")
     
-    # save model config before training
-    if training_args.lora_enable:
-        if training_args.local_rank == 0 or training_args.local_rank == -1:
-            model.config.use_cache = True
-            model.config.gradient_checkpointing = True
-            model.config.save_pretrained(training_args.output_dir)
+    # numpy_rng_state = np.random.get_state()
+    # print("***"*80, 'before train')
+    # print(f"  > NumPy state fingerprint: {numpy_rng_state[1][:5]}") 
 
     # Start training
     if resume_from_checkpoint:

@@ -1,3 +1,14 @@
+0905 lfj
+New features
+1. train_llama_lfj.py中新增loss检测代码，检测过大以及nan，追溯对应数据
+2. models/protein_llama_lfj.py以及protein_arch_lfj.py中，新增使用门控机制融合global feature与residue feature的Q-former。
+
+Bug fix
+1. 修正ActRefDesc对data_name的定义
+
+Others
+1. dataset/dataloader_frag.py存在一些随机数bug的古战场遗迹，注意这些注释不要传到main，包括此条
+
 0904 djy
 1. 更新了requirements.text
 2. README.md中添加了环境安装的流程

@@ -266,7 +266,7 @@ class ActRefDesc(FragRefDataset):
             max_sequence_length: Optional[int] = 1021,
             **kwargs,
             ):
-        data_name = "VenusX_Dom"
+        data_name = "VenusX_Act"
         task_type = "referring_desc"
         question_template = Frag_Act_Des
         answer_template = None
