@@ -3,6 +3,7 @@
 2. dataset/dataloader_refferring.py中修正了ActDesc任务数据加载时读取的数据集名称
 3. eval/evaluate_function_desc.py中在写入结果时加入了dataset_idxs列，用于去除重复
 4. eval/evaluate_desc_benchmark.py中对dataset_idxs列进行了去重
+5. eval/evaluate_function_desc.py中设置了write_header判断条件，保证追加写入评估结果时不会添加header
 
 0904 djy
 1. 更新了requirements.text
