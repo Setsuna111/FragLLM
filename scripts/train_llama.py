@@ -400,8 +400,8 @@ def train(attn_implementation=None):
                 p.requires_grad_(False)
         
 
-    rank0_print("Model:")
-    rank0_print(model)
+    # rank0_print("Model:")
+    # rank0_print(model)
     rank0_print("ModelTrainable:")
     rank0_print([n for n, p in model.named_parameters() if p.requires_grad])
     rank0_print(model.device)

@@ -10,6 +10,9 @@ test_lfj.ipynb
 eval/evaluate_desc_lfj.py
 merge_lora_weights_lfj.py
 merge_lora_weights_checkpoint_lfj.py
+exam_dataset.py
+dataset_warnings.json
+data_old/
 
 CLAUDE.md
 CLAUDE.md/

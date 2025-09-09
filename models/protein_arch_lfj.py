@@ -181,8 +181,12 @@ class FragmentAdapter(nn.Module):
     ) -> None:
         super(FragmentAdapter, self).__init__()
         self.protein_layer_norm = nn.LayerNorm(protein_emb_dim)
-        # Use multi-scale perceiver for better global-fragment interaction
-        self.multi_scale_perceiver = MultiScalePerceiver(
+
+        # Use different perceiver variants
+        # self.perceiver_layer = Perceiver(
+        #     protein_emb_dim, perceiver_latent_size, text_emb_dim, num_perceiver_heads, num_perceiver_layers, dropout
+        # )
+        self.perceiver_layer = MultiScalePerceiver(
             protein_emb_dim, perceiver_latent_size, text_emb_dim, num_perceiver_heads, num_perceiver_layers, dropout
         )
 
@@ -215,13 +219,13 @@ class FragmentAdapter(nn.Module):
                 global_feature = protein_emb[encoder_mask].mean(dim=0, keepdim=True)  # [1, dim]
                 
                 # Multi-scale processing: combine global context and fragment details
-                fragment_latents = self.multi_scale_perceiver(frag_features, global_feature)
+                fragment_latents = self.perceiver_layer(frag_features, global_feature)
                 all_frag_latents.append(fragment_latents)
             else:
                 # Dummy processing for batch completeness
                 dummy_frag_features = protein_emb[encoder_mask][0:1]
                 dummy_global_feature = protein_emb[encoder_mask].mean(dim=0, keepdim=True)
-                dummy_latents = self.multi_scale_perceiver(dummy_frag_features, dummy_global_feature)
+                dummy_latents = self.perceiver_layer(dummy_frag_features, dummy_global_feature)
                 all_frag_latents.append(dummy_latents)
 
         # 3. Reconstruct final output maintaining original logic
