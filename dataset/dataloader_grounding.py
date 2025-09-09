@@ -146,7 +146,8 @@ class FragGroundingSingle(FragRefDataset):
         ]
         position = ""
         for i, (start, end) in enumerate(position_grd[0]):
-            position +=  f"{self.pos_start_placeholder}({start},{end}){self.pos_end_placeholder}"
+            # position +=  f"{self.pos_start_placeholder}({start},{end}){self.pos_end_placeholder}"
+            position +=  f"({start},{end})"
             if i < len(position_grd[0]) - 2:
                 position += ","
             elif i == len(position_grd[0]) - 2:
@@ -366,16 +367,17 @@ class FragGroundingGroup(FragRefDataset):
         for j in range(len(answer)):
             position = ""
             for i, (start, end) in enumerate(position_grd[j]):
-                position +=  f"{self.pos_start_placeholder}({start},{end}){self.pos_end_placeholder}"
+                # position +=  f"{self.pos_start_placeholder}({start},{end}){self.pos_end_placeholder}"
+                position +=  f"({start},{end})"
                 if i < len(position_grd[j]) - 2:
                     position += ", "
                 elif i == len(position_grd[j]) - 2:
                     position += " and "
             answer_i += f"{answer[j]} at {position}"
-            if j < len(answer) - 2:
+            if j < len(answer) - 1:
                 answer_i += "; "
-            elif j == len(answer) - 2:
-                answer_i += " and "      
+            # elif j == len(answer) - 2:
+            #     answer_i += " and "      
         answer = answer_template.format(task_name=self.task_name_map[self.data_name], contents=answer_i)
         return conversation, answer
     
@@ -591,7 +593,7 @@ if __name__ == "__main__":
     from torch.utils.data import DataLoader
     train_dataloader = DataLoader(
         dataset,
-        batch_size=4,
+        batch_size=1,
         shuffle=True,
         num_workers=0,
         collate_fn=train_collater, 
@@ -600,4 +602,4 @@ if __name__ == "__main__":
     )
     for batch in train_dataloader:
         print(batch)
-        # break
+        break
