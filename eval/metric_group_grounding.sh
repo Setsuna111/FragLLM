@@ -1,0 +1,11 @@
+#!/bin/sh
+
+## USAGE
+
+export PYTHONPATH="./:$PYTHONPATH"
+Results_Path=./eval_results/group_grounding/fragment_training_only_stage2_bw_stage1_lora32_epoch10_0901_merge/ActGroundGroup_results.csv
+IOU_Threshold=0.5
+BERT_Threshold=0.5
+
+
+python eval_local/metric_group_grounding.py --results_path $Results_Path --iou_threshold $IOU_Threshold --bert_threshold $BERT_Threshold
