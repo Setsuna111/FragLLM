@@ -1,3 +1,7 @@
+0909 djy
+1. dataset/dataloader_grounding.py中删除了定位任务中位置区间前后的特殊token
+2. eval/中添加了eval/evaluate_grounding.py，eval/evaluate_grounding.sh，eval/metric_group_grounding.py，eval/metric_group_grounding.sh，eval/metric_single_grounding.py和eval/metric_single_grounding.sh， 用于grounding任务的推理和指标计算
+
 0905 djy
 1. scripts/train_llama.py中注释了transformers.trainer_utils.set_seed(training_args.seed)
 2. dataset/dataloader_refferring.py中修正了ActDesc任务数据加载时读取的数据集名称
