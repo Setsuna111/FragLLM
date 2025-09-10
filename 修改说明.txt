@@ -1,3 +1,6 @@
+0910 djy
+1. scripts/zero2.json中设置overlap_comm==false，避免训练过程中gradnorm出现nan
+
 0909 djy
 1. dataset/dataloader_grounding.py中删除了定位任务中位置区间前后的特殊token
 2. eval/中添加了eval/evaluate_grounding.py，eval/evaluate_grounding.sh，eval/metric_group_grounding.py，eval/metric_group_grounding.sh，eval/metric_single_grounding.py和eval/metric_single_grounding.sh， 用于grounding任务的推理和指标计算
