@@ -12,6 +12,7 @@ argParser.add_argument("--results_path", type=str, help="path to save the genera
 argParser.add_argument("--iou_threshold", type=float, help="iou threshold")
 argParser.add_argument("--bert_threshold", type=float, help="bert threshold")
 argParser.add_argument("--model_path", type=str, default="/home/djy/projects/Data/HF_models/biobert-large-cased-v1.1", help="path to the prot2text model")
+argParser.add_argument("--embedding_path", type=str, default="/home/djy/projects/Documents/FragLLM_git/eval_local/vectors_val_test/VenusX_Act.npz", help="path to the embedding file")
 args = argParser.parse_args()
 
 # Load pre-trained model tokenizer and model for evaluation
@@ -30,9 +31,19 @@ def get_bert_embedding(text):
 def text_similarity_bert(str1, str2):
     emb1 = get_bert_embedding(str1)
     emb2 = get_bert_embedding(str2)
-
     return cosine_similarity([emb1], [emb2])[0, 0]
 
+
+# 从保存的embedding和category_names中检索category_name
+def get_embedding_from_category_name(pred_label, data):
+    feature_vectors = data["feature_vectors"]
+    category_names = data["category_names"]
+    emb_pred = get_bert_embedding(pred_label)
+    # 选择相似性最大的category_name
+    similarity_matrix = cosine_similarity([emb_pred], feature_vectors)
+    max_similarity_idx = similarity_matrix.argmax()
+    max_category_name = category_names[max_similarity_idx]
+    return max_category_name
 
 # extract the position from the responses
 def extract_position_single(response):
@@ -207,6 +218,7 @@ def compute_TP(positions_pre, positions_ref, iou_threshold):
 
 
 def evaluate_group_grounding(args: Dict[str, Any]) -> Dict[str, Any]:
+    data_npz = np.load(args.embedding_path)
     res = pd.read_csv(args.results_path)
     res = res.drop_duplicates(subset=['dataset_idx'])
     predictions = res['generated'].tolist()
@@ -228,7 +240,7 @@ def evaluate_group_grounding(args: Dict[str, Any]) -> Dict[str, Any]:
     distances_samples = []
     bert_samples = []
     for (idx, (prediction, reference)) in enumerate(zip(predictions, references)):
-        prediction = re.sub(r'[^\x20-\x7E]', '', prediction)
+        # prediction = re.sub(r'[^\x20-\x7E]', '', prediction)
         # reference.replace("<|reserved_special_token_0|>", "")
         # 提取targets
         pred_targets = extract_target(prediction) # list of strings
@@ -240,16 +252,23 @@ def evaluate_group_grounding(args: Dict[str, Any]) -> Dict[str, Any]:
         ref_positions_num.append(sum([len(extract_position_single(ref_target)) for ref_target in ref_targets]))
       
         pred_labels = [extract_class_name(pred_target) for pred_target in pred_targets] # list of pred labels
+        # import pdb; pdb.set_trace()
+        pred_labels = [get_embedding_from_category_name(pred_label, data_npz) for pred_label in pred_labels]
         ref_labels = [extract_class_name(ref_target) for ref_target in ref_targets]
         # 匹配labels, 可能存在预测标签数量小于参考标签数量的情况
         matched_pred_labels_idx, matched_ref_labels_idx, matched_berts = match_labels_idx(pred_labels, ref_labels)
         matched_pred_targets = [pred_targets[i] for i in matched_pred_labels_idx]
         matched_ref_targets = [ref_targets[i] for i in matched_ref_labels_idx]
         matched_targets_num.append(len([i for i in matched_berts if i >= args.bert_threshold]))
+        # matched_pred_labels = [pred_labels[i] for i in matched_pred_labels_idx]
+        # matched_ref_labels = [ref_labels[i] for i in matched_ref_labels_idx]
         if len(pred_targets) < len(ref_targets): # 少预测的使用None填充
             matched_pred_targets = matched_pred_targets + ["None"] * (len(ref_targets) - len(matched_pred_targets))
             matched_ref_targets = matched_ref_targets + [x for x in ref_targets if x not in matched_ref_targets]
             matched_berts = matched_berts + [0] * (len(ref_targets) - len(matched_berts))
+
+            # matched_pred_labels = matched_pred_labels + ["None"] * (len(ref_targets) - len(matched_pred_labels))
+            # matched_ref_labels = matched_ref_labels + [x for x in ref_labels if x not in matched_ref_labels]
             # import pdb; pdb.set_trace()
         # assert matched_targets_num[-1] <= 
         bert_samples.append(sum(matched_berts))
