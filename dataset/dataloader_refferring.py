@@ -99,6 +99,7 @@ class FragRefDataset(torch.utils.data.Dataset):
             fragment_placeholder: str = '<|reserved_special_token_2|>',
             pos_start_placeholder: str = '<|reserved_special_token_3|>',
             pos_end_placeholder: str = '<|reserved_special_token_4|>',
+            perceiver_latent_size: int = 1,
             **kwargs,
             ):
         super().__init__()
@@ -110,7 +111,12 @@ class FragRefDataset(torch.utils.data.Dataset):
         self.system_message = system_message
         self.filter_sequence = filter_sequence
         self.sequence_placeholder = sequence_placeholder
-        self.fragment_placeholder = fragment_placeholder
+        self.perceiver_latent_size = perceiver_latent_size
+        # Generate multiple fragment placeholders based on latent size
+        if perceiver_latent_size > 1:
+            self.fragment_placeholder = fragment_placeholder * perceiver_latent_size
+        else:
+            self.fragment_placeholder = fragment_placeholder
         self.pos_start_placeholder = pos_start_placeholder
         self.pos_end_placeholder = pos_end_placeholder
         if self.data_name == "Function":

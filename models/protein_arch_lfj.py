@@ -59,39 +59,71 @@ class PerceiverLayer(nn.Module):
 
 class MultiScalePerceiverLayer(nn.Module):
     """Multi-scale Perceiver layer that handles global and fragment features."""
-    def __init__(self, emb_dim: int, num_heads: int, dropout: float) -> None:
+    def __init__(self, emb_dim: int, num_heads: int, dropout: float, 
+                 protein_emb_dim: Optional[int] = None, text_emb_dim: Optional[int] = None) -> None:
         super().__init__()
-        self.global_attn = nn.MultiheadAttention(emb_dim, num_heads, dropout=dropout, batch_first=True)
-        self.fragment_attn = nn.MultiheadAttention(emb_dim, num_heads, dropout=dropout, batch_first=True)
-        self.ffn = FeedForwardNetwork(emb_dim, dropout, ff_expansion=0.5)
-        self.output_layer_norm = nn.LayerNorm(emb_dim)
+        self.emb_dim = emb_dim
+        self.protein_emb_dim = protein_emb_dim or emb_dim
+        self.text_emb_dim = text_emb_dim or emb_dim
+        
+        # Two independent paths with different dimensions
+        # Global path (text_emb_dim)
+        self.global_attn = nn.MultiheadAttention(self.text_emb_dim, num_heads, dropout=dropout, batch_first=True)
+        self.global_ffn = FeedForwardNetwork(self.text_emb_dim, dropout, ff_expansion=0.5)
+        self.global_layer_norm = nn.LayerNorm(self.text_emb_dim)
+        self.global_linear = nn.Linear(self.text_emb_dim, emb_dim)
+        
+        # Fragment path (protein_emb_dim)
+        self.fragment_attn = nn.MultiheadAttention(self.protein_emb_dim, num_heads, dropout=dropout, batch_first=True)
+        self.fragment_ffn = FeedForwardNetwork(self.protein_emb_dim, dropout, ff_expansion=0.5)
+        self.fragment_layer_norm = nn.LayerNorm(self.protein_emb_dim)
+        self.fragment_linear = nn.Linear(self.protein_emb_dim, emb_dim)
+        
+        # Final fusion
         self.global_gate = nn.Linear(emb_dim, 1)
         self.fragment_gate = nn.Linear(emb_dim, 1)
+        self.output_layer_norm = nn.LayerNorm(emb_dim)
         
-    def forward(self, latents: Tensor, global_features: Tensor, fragment_features: Tensor) -> Tensor:
-        """Multi-scale cross-attention between latents, global and fragment features."""
-        residuals = latents
+    def forward(self, latents_global: Tensor, latents_fragment: Tensor, 
+                global_features: Tensor, fragment_features: Tensor) -> Tensor:
+        """Multi-scale cross-attention with independent processing paths.
         
-        # Global context attention
-        global_attended, _ = self.global_attn(latents, global_features, global_features)
+        Args:
+            latents_global: [latent_size, text_emb_dim] - learnable latents for global path
+            latents_fragment: [latent_size, protein_emb_dim] - learnable latents for fragment path  
+            global_features: [1, text_emb_dim] - global feature from adapter output
+            fragment_features: [fragment_len, protein_emb_dim] - residue-level features from ESM
+        """
+        # Global path: cross attention + FFN + residual (text_emb_dim)
+        global_residual = latents_global
+        global_attended, _ = self.global_attn(latents_global, global_features, global_features)
+        global_attended = self.global_ffn(global_residual + global_attended) + global_residual
+        global_attended = self.global_layer_norm(global_attended)
         
-        # Fragment residue attention  
-        fragment_attended, _ = self.fragment_attn(latents, fragment_features, fragment_features)
+        # Fragment path: cross attention + FFN + residual (protein_emb_dim)
+        fragment_residual = latents_fragment
+        fragment_attended, _ = self.fragment_attn(latents_fragment, fragment_features, fragment_features)
+        fragment_attended = self.fragment_ffn(fragment_residual + fragment_attended) + fragment_residual
+        fragment_attended = self.fragment_layer_norm(fragment_attended)
         
-        # Adaptive gating to balance global vs fragment information
-        global_weight = torch.sigmoid(self.global_gate(global_attended))
-        fragment_weight = torch.sigmoid(self.fragment_gate(fragment_attended))
+        # Linear projection to unified dimension
+        global_projected = self.global_linear(global_attended)    # [latent_size, emb_dim]
+        fragment_projected = self.fragment_linear(fragment_attended)  # [latent_size, emb_dim]
+        
+        # Adaptive gating for weighted combination
+        global_weight = torch.sigmoid(self.global_gate(global_projected))
+        fragment_weight = torch.sigmoid(self.fragment_gate(fragment_projected))
         
         # Normalize weights
         total_weight = global_weight + fragment_weight
         global_weight = global_weight / (total_weight + 1e-8)
         fragment_weight = fragment_weight / (total_weight + 1e-8)
         
-        # Combine multi-scale features
-        latents = global_weight * global_attended + fragment_weight * fragment_attended
-        latents = self.ffn(residuals + latents) + residuals
+        # Final weighted combination
+        latents = global_weight * global_projected + fragment_weight * fragment_projected
         out: Tensor = self.output_layer_norm(latents)
         return out
+    
 class Perceiver(nn.Module):
     """Perceiver module that handles dim mismatch."""
 
@@ -124,15 +156,23 @@ class MultiScalePerceiver(nn.Module):
     """Multi-scale Perceiver that integrates global protein and fragment features."""
     
     def __init__(
-        self, input_dim: int, latent_size: int, output_dim: int, num_heads: int, num_layers: int, dropout: float
+        self, input_dim: int, latent_size: int, output_dim: int, num_heads: int, num_layers: int, dropout: float,
+        protein_emb_dim: Optional[int] = None, text_emb_dim: Optional[int] = None
     ) -> None:
         super().__init__()
-        self.latents = nn.Parameter(torch.randn(latent_size, input_dim))
-        self.latent_layer_norm = nn.LayerNorm(input_dim)
-        self.global_feature_proj = nn.Linear(input_dim, input_dim)
+        self.protein_emb_dim = protein_emb_dim or input_dim
+        self.text_emb_dim = text_emb_dim or input_dim
+        
+        # Two sets of learnable latents with different dimensions
+        self.latents_global = nn.Parameter(torch.randn(latent_size, self.text_emb_dim))
+        self.latents_fragment = nn.Parameter(torch.randn(latent_size, self.protein_emb_dim))
+        self.global_latent_norm = nn.LayerNorm(self.text_emb_dim)
+        self.fragment_latent_norm = nn.LayerNorm(self.protein_emb_dim)
         
         # First layer uses multi-scale perceiver
-        self.multi_scale_perceiver = MultiScalePerceiverLayer(input_dim, num_heads, dropout)
+        self.multi_scale_perceiver = MultiScalePerceiverLayer(
+            input_dim, num_heads, dropout, self.protein_emb_dim, self.text_emb_dim
+        )
         
         # Subsequent layers use standard self-attention
         self.self_attention_layers = nn.ModuleList(
@@ -145,20 +185,21 @@ class MultiScalePerceiver(nn.Module):
     def forward(self, fragment_features: Tensor, global_feature: Tensor) -> Tensor:
         """
         Args:
-            fragment_features: [fragment_len, dim] - residue-level features
-            global_feature: [1, dim] - global protein feature (averaged)
+            fragment_features: [fragment_len, protein_emb_dim] - residue-level features from ESM
+            global_feature: [1, text_emb_dim] - global feature from adapter output
         Returns:
             latents: [latent_size, output_dim] - fixed-length fragment representation
         """
-        # Initialize latents
-        latents = self.latents
-        latents = self.latent_layer_norm(latents)
+        # Initialize two sets of latents with different dimensions
+        latents_global = self.latents_global
+        latents_fragment = self.latents_fragment
+        latents_global = self.global_latent_norm(latents_global)
+        latents_fragment = self.fragment_latent_norm(latents_fragment)
         
-        # Project global feature for better integration
-        global_feature = self.global_feature_proj(global_feature)
-        
-        # Multi-scale cross-attention: latents attend to both global and fragment features
-        latents = self.multi_scale_perceiver(latents, global_feature, fragment_features)
+        # Multi-scale cross-attention with dual paths
+        latents = self.multi_scale_perceiver(
+            latents_global, latents_fragment, global_feature, fragment_features
+        )
         
         # Self-attention refinement layers
         for layer in self.self_attention_layers:
@@ -182,12 +223,9 @@ class FragmentAdapter(nn.Module):
         super(FragmentAdapter, self).__init__()
         self.protein_layer_norm = nn.LayerNorm(protein_emb_dim)
 
-        # Use different perceiver variants
-        # self.perceiver_layer = Perceiver(
-        #     protein_emb_dim, perceiver_latent_size, text_emb_dim, num_perceiver_heads, num_perceiver_layers, dropout
-        # )
         self.perceiver_layer = MultiScalePerceiver(
-            protein_emb_dim, perceiver_latent_size, text_emb_dim, num_perceiver_heads, num_perceiver_layers, dropout
+            text_emb_dim, perceiver_latent_size, text_emb_dim, num_perceiver_heads, num_perceiver_layers, dropout,
+            protein_emb_dim=protein_emb_dim, text_emb_dim=text_emb_dim
         )
 
     def forward(
@@ -195,6 +233,7 @@ class FragmentAdapter(nn.Module):
         position_refs: List[List[int]],
         encoder_hidden_states: Tensor,
         encoder_attention_mask: Tensor,
+        adapter_output: Optional[Tensor] = None,
         **kwargs: Any,
     ) -> Union[Tuple[Tensor], Optional[Tuple[Tensor, Tuple[Tensor, ...]]]]:
         
@@ -207,24 +246,25 @@ class FragmentAdapter(nn.Module):
         # 2. Process each sample with multi-scale interaction
         all_frag_latents = []
         for i in range(batch_size):
-            protein_emb = encoder_hidden_states[i]
+            protein_emb = encoder_hidden_states[i]  # For fragment features (residue-level)
             encoder_mask = encoder_attention_mask[i]
             position_ref = position_refs[i]
 
             if position_ref is not None:
-                # Extract fragment features based on position_ref
-                frag_features = protein_emb[encoder_mask][position_ref[0]:position_ref[1]]
+                # Extract fragment features from ESM output (residue-level)
+                frag_features = protein_emb[encoder_mask][position_ref[0]:position_ref[1]]  # [fragment_len, protein_emb_dim]
                 
-                # Compute global protein feature (average of entire sequence)
-                global_feature = protein_emb[encoder_mask].mean(dim=0, keepdim=True)  # [1, dim]
+                # Global feature only comes from adapter output
+                # Use adapter output for global feature (semantically aligned with text)
+                global_feature = adapter_output[i][encoder_mask].mean(dim=0, keepdim=True)  # [1, text_emb_dim]
                 
-                # Multi-scale processing: combine global context and fragment details
+                # Multi-scale processing: fragment from ESM, global from adapter
                 fragment_latents = self.perceiver_layer(frag_features, global_feature)
                 all_frag_latents.append(fragment_latents)
             else:
                 # Dummy processing for batch completeness
-                dummy_frag_features = protein_emb[encoder_mask][0:1]
-                dummy_global_feature = protein_emb[encoder_mask].mean(dim=0, keepdim=True)
+                dummy_frag_features = protein_emb[encoder_mask][0:1]  # [1, protein_emb_dim]
+                dummy_global_feature = adapter_output[i][encoder_mask].mean(dim=0, keepdim=True)  # [1, text_emb_dim]
                 dummy_latents = self.perceiver_layer(dummy_frag_features, dummy_global_feature)
                 all_frag_latents.append(dummy_latents)
 
@@ -380,8 +420,7 @@ class ProteinMetaForCausalLM(ABC):
             # B, L, D
             # print("-------------:", inputs_embeds.requires_grad)
             # print("*************:", adapter_output.requires_grad)
-            # inputs_embeds[placeholder_mask] = adapter_output[encoder_mask]
-            inputs_embeds[placeholder_mask] = adapter_output[encoder_mask]  # 0906 debug
+            inputs_embeds[placeholder_mask] = adapter_output[encoder_mask]  # debug temp #
             # mask3d = placeholder_mask.unsqueeze(-1).expand_as(inputs_embeds)  # [B, T, D]
             # src = encoder_hidden_states[encoder_mask].reshape(-1)             # [N*D]
             # inputs_embeds = inputs_embeds.masked_scatter(mask3d, src) 
@@ -394,6 +433,7 @@ class ProteinMetaForCausalLM(ABC):
                     position_refs=position_refs,
                     encoder_hidden_states=encoder_hidden_states,
                     encoder_attention_mask=encoder_attention_mask,
+                    adapter_output=adapter_output,
                 )
                 fragment_mask = input_ids == self.config.fragment_placeholder_id
                 inputs_embeds[fragment_mask] = torch.cat([fragment_embed for fragment_embed in fragment_embeds if fragment_embed is not None], dim=-2)
@@ -404,6 +444,7 @@ class ProteinMetaForCausalLM(ABC):
                     position_refs=dummy_position_refs,
                     encoder_hidden_states=dummy_protein_hidden_states,
                     encoder_attention_mask=encoder_attention_mask,
+                    adapter_output=adapter_output,
                 )
                 inputs_embeds = inputs_embeds +(0.0 * torch.cat(dummy_fragment_embeds, dim=-2)).sum()
         else:

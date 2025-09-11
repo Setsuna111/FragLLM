@@ -11,7 +11,7 @@ sys.path.append("..")
 sys.path.append(".")
 
 import os
-# os.environ["CUDA_VISIBLE_DEVICES"] = "3"
+# os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 
 import pathlib
 import transformers
@@ -78,6 +78,7 @@ def all_gather_scalar(value):
     dist.all_gather(gathered_values, value)
     return [v.item() for v in gathered_values]
 
+
 @dataclass
 class FragModelArguments:
     """Model arguments for fragment training."""
@@ -102,7 +103,6 @@ class FragModelArguments:
     pos_start_placeholder_id: int = 128011
     pos_end_placeholder_id: int = 128012
 
-    
 
 @dataclass
 class FragDataArguments:
@@ -134,7 +134,7 @@ class FragTrainingArguments(TrainingArguments):
     """Extended training arguments for fragment training."""
     output_dir: Optional[str] = field(default="./checkpoints/fragment_training_test", metadata={"help": "Output directory"})
     num_train_epochs: Optional[int] = field(default=1, metadata={"help": "Number of training epochs"})
-    per_device_train_batch_size: Optional[int] = field(default=4, metadata={"help": "Batch size per device for training"})
+    per_device_train_batch_size: Optional[int] = field(default=1, metadata={"help": "Batch size per device for training"})
     per_device_eval_batch_size: Optional[int] = field(default=4, metadata={"help": "Batch size per device for evaluation"})
     gradient_accumulation_steps: Optional[int] = field(default=4, metadata={"help": "Gradient accumulation steps"})
     evaluation_strategy: Optional[str] = field(default=None, metadata={"help": "Evaluation strategy"})
@@ -243,229 +243,176 @@ class FragTrainer(Trainer):
         self.nan_inf_threshold = float('inf')  # NaN/Inf检测
         self.sample_loss_log_interval = 100  # 每100步打印一次样本级loss统计
         self.step_count = 0
-        
-        # Gradient monitoring
-        self.grad_norm_threshold = 100.0  # 梯度范数阈值
-        self.track_gradient_stats = False
-                
-        # Parameter monitoring
-        self.param_norm_threshold = 1000.0  # 参数范数阈值
-        self.check_param_norms = False
-    
-    def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
-        """
-        重写compute_loss方法，添加样本级loss监控，确保不影响原始训练流程
-        """
-        if "labels" not in inputs:
-            return super().compute_loss(model, inputs, return_outputs=return_outputs)
-        try:
-            # 获取原始输出
-            outputs = model(**inputs)
-            
-            # 如果model直接返回loss且没有logits，使用原始方法
-            if "loss" in outputs and ("logits" not in outputs or outputs.get("logits") is None):
-                loss = outputs["loss"]
-                return (loss, outputs) if return_outputs else loss
-            
-            logits = outputs.get("logits")
-            labels = inputs["labels"]
-            
-            if logits is None:
-                return super().compute_loss(model, inputs, return_outputs=return_outputs)
-                
-            # 计算样本级loss
-            loss_fct = nn.CrossEntropyLoss(reduction='none')  # 不进行reduction，保持样本维度
-            
-            # Flatten for loss calculation - 遵循标准的causal LM loss计算
-            shift_logits = logits[..., :-1, :].contiguous()
-            shift_labels = labels[..., 1:].contiguous()
-            
-            batch_size, seq_len, vocab_size = shift_logits.shape
-            flat_logits = shift_logits.view(-1, vocab_size)
-            flat_labels = shift_labels.view(-1)
-            
-            # 计算每个token的loss
-            token_losses = loss_fct(flat_logits, flat_labels)  # (batch_size * seq_len)
-            token_losses = token_losses.view(batch_size, seq_len)  # (batch_size, seq_len)
-            
-            # 只计算非-100标签的loss
-            valid_mask = (shift_labels != -100).float()
-            
-            # 样本级平均loss (每个样本的有效token平均loss)
-            valid_token_count = valid_mask.sum(dim=1)
-            sample_losses = torch.where(
-                valid_token_count > 0,
-                (token_losses * valid_mask).sum(dim=1) / valid_token_count,
-                torch.zeros_like(valid_token_count)
-            )
-            
-            # 检测异常loss（多GPU环境下）
-            self._check_anomalous_loss_distributed(sample_losses, inputs, flat_logits, flat_labels)
-            
-            # 返回批次平均loss用于优化 - 确保与标准计算一致
-            total_loss = sample_losses.mean()
-                        
-            return (total_loss, outputs) if return_outputs else total_loss
-            
-        except Exception as e:
-            return super().compute_loss(model, inputs, return_outputs=return_outputs)
-    
-    def _check_anomalous_loss_distributed(self, sample_losses, inputs, flat_logits=None, flat_labels=None):
-        """
-        检测并打印异常loss样本信息，支持多GPU环境
-        """
-        batch_size = sample_losses.shape[0]
-        
-        for i in range(batch_size):
-            sample_loss = sample_losses[i].item()
-            
-            # 检测NaN或Inf
-            if torch.isnan(sample_losses[i]) or torch.isinf(sample_losses[i]):
-                all_rank_print(f"🚨 [STEP {self.state.global_step}] CRITICAL: NaN/Inf loss detected!")
-                all_rank_print(f"   Sample {i}: loss = {sample_loss}")
-                self._print_sample_debug_info(inputs, i, flat_logits, flat_labels, use_all_rank=True)
-                continue
-            
-            # 检测异常高loss
-            if sample_loss > self.loss_threshold:
-                all_rank_print(f"⚠️  [STEP {self.state.global_step}] HIGH LOSS detected!")
-                all_rank_print(f"   Sample {i}: loss = {sample_loss:.4f} (threshold: {self.loss_threshold})")
-                self._print_sample_debug_info(inputs, i, flat_logits, flat_labels, use_all_rank=True)
-        
-        # 检测梯度异常
-        if self._check_gradient_anomalies:
-            self._check_gradient_anomalies()
-        
-        # 检测参数异常
-        if self.check_param_norms:
-            self._check_parameter_norms()
-    
-    def _check_gradient_anomalies(self):
-        """检测梯度异常"""
-        if not self.track_gradient_stats:
-            return
-            
-        try:
-            total_norm = 0
-            nan_found = False
-            inf_found = False
-            
-            for name, param in self.model.named_parameters():
-                if param.grad is not None:
-                    param_norm = param.grad.data.norm(2)
-                    if torch.isnan(param_norm):
-                        all_rank_print(f"🚨 NaN gradient in {name}")
-                        nan_found = True
-                    elif torch.isinf(param_norm):
-                        all_rank_print(f"🚨 Inf gradient in {name}")
-                        inf_found = True
-                    else:
-                        total_norm += param_norm.item() ** 2
-            
-            if not (nan_found or inf_found):
-                total_norm = total_norm ** (1. / 2)
-                if total_norm > self.grad_norm_threshold:
-                    all_rank_print(f"⚠️ [STEP {self.state.global_step}] Large gradient norm: {total_norm:.4f}")
-                    
-        except Exception as e:
-            rank0_print(f"Warning: Gradient check failed: {e}")
-    
-    def _check_parameter_norms(self):
-        """检测参数范数异常"""
-        try:
-            for name, param in self.model.named_parameters():
-                if param.requires_grad:
-                    param_norm = param.data.norm(2).item()
-                    if torch.isnan(param.data).any():
-                        all_rank_print(f"🚨 NaN parameters in {name}")
-                    elif torch.isinf(param.data).any():
-                        all_rank_print(f"🚨 Inf parameters in {name}")
-                    elif param_norm > self.param_norm_threshold:
-                        all_rank_print(f"⚠️ Large parameter norm in {name}: {param_norm:.4f}")
-        except Exception as e:
-            rank0_print(f"Warning: Parameter check failed: {e}")
 
-    def _print_sample_debug_info(self, inputs, sample_idx, flat_logits=None, flat_labels=None, use_all_rank=False):
-        """
-        打印样本的调试信息，包含更详细的诊断
-        use_all_rank: 如果为True，所有rank都会打印；否则只有rank 0打印
-        """
-        print_func = all_rank_print if use_all_rank else rank0_print
-        
-        try:
-            print_func(f"   === Sample {sample_idx} Debug Info ===")
+    # def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
+    #     """
+    #     重写compute_loss方法，添加样本级loss监控，确保不影响原始训练流程
+    #     """
+    #     if "labels" not in inputs:
+    #         return super().compute_loss(model, inputs, return_outputs=return_outputs)
+    #     try:
+    #         # 获取原始输出
+    #         outputs = model(**inputs)
             
-            # 基本信息
-            if "input_ids" in inputs:
-                input_ids = inputs["input_ids"][sample_idx]
-                seq_len = input_ids.shape[0]
-                print_func(f"   Sequence length: {seq_len}")
-                
-                # 检测异常token IDs
-                unique_tokens = torch.unique(input_ids)
-                if len(unique_tokens) < 5:  # 可能的异常pattern
-                    print_func(f"   Warning: Low token diversity, unique tokens: {len(unique_tokens)}")
-                
-            if "labels" in inputs:
-                labels = inputs["labels"][sample_idx]
-                valid_labels = (labels != -100).sum().item()
-                total_labels = labels.numel()
-                print_func(f"   Valid labels: {valid_labels}/{total_labels} ({valid_labels/total_labels*100:.1f}%)")
-                
-                # 检测label分布
-                if valid_labels > 0:
-                    valid_label_values = labels[labels != -100]
-                    unique_labels = torch.unique(valid_label_values)
-                    print_func(f"   Label range: {unique_labels.min().item()} - {unique_labels.max().item()}")
-                    print_func(f"   Unique label count: {len(unique_labels)}")
-                
-            if "protein_input_ids" in inputs:
-                protein_ids = inputs["protein_input_ids"][sample_idx]
-                protein_len = (protein_ids != 0).sum().item()  # 假设0是padding
-                print_func(f"   Protein sequence length: {protein_len}")
-                
-                # 检测protein序列异常
-                if protein_len == 0:
-                    print_func(f"   Warning: Empty protein sequence detected!")
-                elif protein_len == len(protein_ids):
-                    print_func(f"   Warning: No padding in protein sequence, might be truncated")
-                
-            if "position_refs" in inputs and inputs["position_refs"]:
-                position_ref = inputs["position_refs"][sample_idx] if sample_idx < len(inputs["position_refs"]) else None
-                print_func(f"   Fragment position: {position_ref}")
+    #         # 如果model直接返回loss且没有logits，使用原始方法
+    #         if "loss" in outputs and ("logits" not in outputs or outputs.get("logits") is None):
+    #             loss = outputs["loss"]
+    #             return (loss, outputs) if return_outputs else loss
             
-            # Logits统计（如果可用）
-            if flat_logits is not None and flat_labels is not None:
-                try:
-                    # 获取该样本对应的logits和labels
-                    sample_start = sample_idx * (flat_logits.shape[0] // len(inputs["input_ids"]))
-                    sample_end = (sample_idx + 1) * (flat_logits.shape[0] // len(inputs["input_ids"]))
-                    sample_logits = flat_logits[sample_start:sample_end]
-                    sample_labels_flat = flat_labels[sample_start:sample_end]
-                    
-                    # 检测logits异常
-                    logits_max = sample_logits.max().item()
-                    logits_min = sample_logits.min().item()
-                    logits_mean = sample_logits.mean().item()
-                    
-                    print_func(f"   Logits stats - Min: {logits_min:.4f}, Max: {logits_max:.4f}, Mean: {logits_mean:.4f}")
-                    
-                    if abs(logits_max) > 100 or abs(logits_min) > 100:
-                        print_func(f"   Warning: Extreme logit values detected!")
-                        
-                    # 检测是否有NaN/Inf在logits中
-                    if torch.isnan(sample_logits).any():
-                        print_func(f"   Critical: NaN values in logits!")
-                    if torch.isinf(sample_logits).any():
-                        print_func(f"   Critical: Inf values in logits!")
-                        
-                except Exception as logit_err:
-                    print_func(f"   Could not analyze logits: {logit_err}")
+    #         logits = outputs.get("logits")
+    #         labels = inputs["labels"]
+            
+    #         if logits is None:
+    #             return super().compute_loss(model, inputs, return_outputs=return_outputs)
                 
-        except Exception as e:
-            print_func(f"   Error printing debug info: {str(e)}")
+    #         # 计算样本级loss
+    #         loss_fct = nn.CrossEntropyLoss(reduction='none')  # 不进行reduction，保持样本维度
+            
+    #         # Flatten for loss calculation - 遵循标准的causal LM loss计算
+    #         shift_logits = logits[..., :-1, :].contiguous()
+    #         shift_labels = labels[..., 1:].contiguous()
+            
+    #         batch_size, seq_len, vocab_size = shift_logits.shape
+    #         flat_logits = shift_logits.view(-1, vocab_size)
+    #         flat_labels = shift_labels.view(-1)
+            
+    #         # 计算每个token的loss
+    #         token_losses = loss_fct(flat_logits, flat_labels)  # (batch_size * seq_len)
+    #         token_losses = token_losses.view(batch_size, seq_len)  # (batch_size, seq_len)
+            
+    #         # 只计算非-100标签的loss
+    #         valid_mask = (shift_labels != -100).float()
+            
+    #         # 样本级平均loss (每个样本的有效token平均loss)
+    #         valid_token_count = valid_mask.sum(dim=1)
+    #         sample_losses = torch.where(
+    #             valid_token_count > 0,
+    #             (token_losses * valid_mask).sum(dim=1) / valid_token_count,
+    #             torch.zeros_like(valid_token_count)
+    #         )
+            
+    #         # 检测异常loss（多GPU环境下）
+    #         self._check_anomalous_loss_distributed(sample_losses, inputs, flat_logits, flat_labels)
+            
+    #         # 返回批次平均loss用于优化 - 确保与标准计算一致
+    #         total_loss = sample_losses.mean()
+                        
+    #         return (total_loss, outputs) if return_outputs else total_loss
+            
+    #     except Exception as e:
+    #         return super().compute_loss(model, inputs, return_outputs=return_outputs)
+    
+    # def _check_anomalous_loss_distributed(self, sample_losses, inputs, flat_logits=None, flat_labels=None):
+    #     """
+    #     检测并打印异常loss样本信息，支持多GPU环境
+    #     """
+    #     batch_size = sample_losses.shape[0]
         
-        print_func(f"   === End Debug Info ===")
+    #     for i in range(batch_size):
+    #         sample_loss = sample_losses[i].item()
+            
+    #         # 检测NaN或Inf
+    #         if torch.isnan(sample_losses[i]) or torch.isinf(sample_losses[i]):
+    #             all_rank_print(f"🚨 [STEP {self.state.global_step}] CRITICAL: NaN/Inf loss detected!")
+    #             all_rank_print(f"   Sample {i}: loss = {sample_loss}")
+    #             self._print_sample_debug_info(inputs, i, flat_logits, flat_labels, use_all_rank=True)
+    #             continue
+            
+    #         # 检测异常高loss
+    #         if sample_loss > self.loss_threshold:
+    #             all_rank_print(f"⚠️  [STEP {self.state.global_step}] HIGH LOSS detected!")
+    #             all_rank_print(f"   Sample {i}: loss = {sample_loss:.4f} (threshold: {self.loss_threshold})")
+    #             self._print_sample_debug_info(inputs, i, flat_logits, flat_labels, use_all_rank=True)
+        
+    #     # 检测梯度异常
+    #     if self._check_gradient_anomalies:
+    #         self._check_gradient_anomalies()
+        
+    #     # 检测参数异常
+    #     if self.check_param_norms:
+    #         self._check_parameter_norms()
+    
+    # def _print_sample_debug_info(self, inputs, sample_idx, flat_logits=None, flat_labels=None, use_all_rank=False):
+    #     """
+    #     打印样本的调试信息，包含更详细的诊断
+    #     use_all_rank: 如果为True，所有rank都会打印；否则只有rank 0打印
+    #     """
+    #     print_func = all_rank_print if use_all_rank else rank0_print
+        
+    #     try:
+    #         print_func(f"   === Sample {sample_idx} Debug Info ===")
+            
+    #         # 基本信息
+    #         if "input_ids" in inputs:
+    #             input_ids = inputs["input_ids"][sample_idx]
+    #             seq_len = input_ids.shape[0]
+    #             print_func(f"   Sequence length: {seq_len}")
+                
+    #             # 检测异常token IDs
+    #             unique_tokens = torch.unique(input_ids)
+    #             if len(unique_tokens) < 5:  # 可能的异常pattern
+    #                 print_func(f"   Warning: Low token diversity, unique tokens: {len(unique_tokens)}")
+                
+    #         if "labels" in inputs:
+    #             labels = inputs["labels"][sample_idx]
+    #             valid_labels = (labels != -100).sum().item()
+    #             total_labels = labels.numel()
+    #             print_func(f"   Valid labels: {valid_labels}/{total_labels} ({valid_labels/total_labels*100:.1f}%)")
+                
+    #             # 检测label分布
+    #             if valid_labels > 0:
+    #                 valid_label_values = labels[labels != -100]
+    #                 unique_labels = torch.unique(valid_label_values)
+    #                 print_func(f"   Label range: {unique_labels.min().item()} - {unique_labels.max().item()}")
+    #                 print_func(f"   Unique label count: {len(unique_labels)}")
+                
+    #         if "protein_input_ids" in inputs:
+    #             protein_ids = inputs["protein_input_ids"][sample_idx]
+    #             protein_len = (protein_ids != 0).sum().item()  # 假设0是padding
+    #             print_func(f"   Protein sequence length: {protein_len}")
+                
+    #             # 检测protein序列异常
+    #             if protein_len == 0:
+    #                 print_func(f"   Warning: Empty protein sequence detected!")
+    #             elif protein_len == len(protein_ids):
+    #                 print_func(f"   Warning: No padding in protein sequence, might be truncated")
+                
+    #         if "position_refs" in inputs and inputs["position_refs"]:
+    #             position_ref = inputs["position_refs"][sample_idx] if sample_idx < len(inputs["position_refs"]) else None
+    #             print_func(f"   Fragment position: {position_ref}")
+            
+    #         # Logits统计（如果可用）
+    #         if flat_logits is not None and flat_labels is not None:
+    #             try:
+    #                 # 获取该样本对应的logits和labels
+    #                 sample_start = sample_idx * (flat_logits.shape[0] // len(inputs["input_ids"]))
+    #                 sample_end = (sample_idx + 1) * (flat_logits.shape[0] // len(inputs["input_ids"]))
+    #                 sample_logits = flat_logits[sample_start:sample_end]
+    #                 sample_labels_flat = flat_labels[sample_start:sample_end]
+                    
+    #                 # 检测logits异常
+    #                 logits_max = sample_logits.max().item()
+    #                 logits_min = sample_logits.min().item()
+    #                 logits_mean = sample_logits.mean().item()
+                    
+    #                 print_func(f"   Logits stats - Min: {logits_min:.4f}, Max: {logits_max:.4f}, Mean: {logits_mean:.4f}")
+                    
+    #                 if abs(logits_max) > 100 or abs(logits_min) > 100:
+    #                     print_func(f"   Warning: Extreme logit values detected!")
+                        
+    #                 # 检测是否有NaN/Inf在logits中
+    #                 if torch.isnan(sample_logits).any():
+    #                     print_func(f"   Critical: NaN values in logits!")
+    #                 if torch.isinf(sample_logits).any():
+    #                     print_func(f"   Critical: Inf values in logits!")
+                        
+    #             except Exception as logit_err:
+    #                 print_func(f"   Could not analyze logits: {logit_err}")
+                
+    #     except Exception as e:
+    #         print_func(f"   Error printing debug info: {str(e)}")
+        
+    #     print_func(f"   === End Debug Info ===")
     
     def create_optimizer(self):
         """Create optimizer with different learning rates for different components."""
@@ -551,58 +498,6 @@ class FragTrainer(Trainer):
         else:
             super(FragTrainer, self)._save(output_dir, state_dict)
 
-
-class LossMonitoringCallback(TrainerCallback):
-    """训练过程监控回调，用于检测训练异常"""
-    
-    def __init__(self):
-        self.loss_spike_threshold = 5.0  # loss突增阈值
-        self.prev_loss = None
-        self.consecutive_high_loss_count = 0
-        self.max_consecutive_high_loss = 10  # 连续高loss的最大允许次数
-        
-    def on_log(self, args, state, control, logs=None, **kwargs):
-        """在日志记录时检查训练状态"""
-        if logs is None:
-            return
-            
-        current_loss = logs.get('train_loss', None)
-        if current_loss is None:
-            return
-            
-        try:
-            # 检测loss突增
-            if self.prev_loss is not None:
-                loss_ratio = current_loss / self.prev_loss
-                if loss_ratio > self.loss_spike_threshold:
-                    all_rank_print(f"🚨 [STEP {state.global_step}] Loss spike detected! {self.prev_loss:.4f} -> {current_loss:.4f} (ratio: {loss_ratio:.2f})")
-                    
-            # 检测连续高loss
-            if current_loss > 10.0:  # 高loss阈值
-                self.consecutive_high_loss_count += 1
-                if self.consecutive_high_loss_count >= self.max_consecutive_high_loss:
-                    all_rank_print(f"🚨 [STEP {state.global_step}] Too many consecutive high losses! Consider stopping training.")
-            else:
-                self.consecutive_high_loss_count = 0
-                
-            # 检测NaN loss
-            if np.isnan(current_loss) or np.isinf(current_loss):
-                all_rank_print(f"🚨 [STEP {state.global_step}] NaN/Inf loss in training logs!")
-                control.should_training_stop = True
-                
-            self.prev_loss = current_loss
-            
-        except Exception as e:
-            rank0_print(f"Warning: Loss monitoring callback failed: {e}")
-            
-    def on_train_begin(self, args, state, control, **kwargs):
-        """训练开始时的初始化"""
-        rank0_print("🔍 Loss monitoring callback activated")
-        
-    def on_train_end(self, args, state, control, **kwargs):
-        """训练结束时的总结"""
-        rank0_print("📊 Loss monitoring summary complete")
-
 def safe_save_model_for_hf_trainer(trainer: transformers.Trainer,
                                    output_dir: str):
     """Collects the state dict and dump to disk."""
@@ -685,6 +580,7 @@ def train(attn_implementation=None):
 
     data_args.sequence_tokenizer = esm_tokenizer
     data_args.llm_tokenizer = llama_tokenizer
+    data_args.perceiver_latent_size = model_args.perceiver_latent_size
     data_module = make_multitask_dataset(data_args)
     print(f"Training dataset size: {len(data_module['train_dataset'])}")
     if data_args.dataset_valid_config is not None:
@@ -792,11 +688,9 @@ def train(attn_implementation=None):
                 print("Continuing with LoRA weights only...")
 
     """***************************** Trainer Setting *****************************"""
-    loss_monitor = LossMonitoringCallback()
     trainer = FragTrainer(
         model=model,
         args=training_args,
-        callbacks=[loss_monitor],
         **data_module,
     )
 

@@ -552,6 +552,7 @@ def make_multitask_dataset(data_args):
         sample_rate_train=data_args.sample_rate_train,
         split="train",
         max_sequence_length=data_args.max_sequence_length,
+        perceiver_latent_size=getattr(data_args, 'perceiver_latent_size', 1),
     )
     data_collator = FragDataCollator(
         sequence_tokenizer=data_args.sequence_tokenizer,
@@ -565,6 +566,7 @@ def make_multitask_dataset(data_args):
         sample_rate_valid=data_args.sample_rate_valid,
         split="valid",
         max_sequence_length=data_args.max_sequence_length,
+        perceiver_latent_size=getattr(data_args, 'perceiver_latent_size', 1),
     ) if data_args.dataset_valid_config is not None else None
 
     return dict(train_dataset=train_dataset,
