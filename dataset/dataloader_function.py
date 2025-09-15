@@ -121,6 +121,12 @@ class FunctionDataset(torch.utils.data.Dataset):
         self.pos_start_placeholder = pos_start_placeholder
         self.pos_end_placeholder = pos_end_placeholder
         self.ann_file = pd.read_csv(os.path.join(self.root_dir, f"{self.data_name}/{self.split}.csv"))
+    
+        # get only first 5000 samples for debugging
+        # print(len(self.ann_file))
+        # self.ann_file = self.ann_file.iloc[:10000]  # 0914 tiny dataset
+        # print(len(self.ann_file))
+
         self.data_infos = self._load_annotations(self.ann_file)
         if self.filter_sequence:
             self.data_infos = self._filter_sequence(self.data_infos)

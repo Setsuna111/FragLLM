@@ -1,7 +1,7 @@
 data/
-checkpoints/
-checkpoints_contrast/
+checkpoints*/
 tensorboard_logs/
+.vscode/
 
 eval/cache/
 results/
@@ -12,7 +12,18 @@ merge_lora_weights_lfj.py
 merge_lora_weights_checkpoint_lfj.py
 exam_dataset.py
 dataset_warnings.json
-data_old/
+data_0831/
+data_before_0915/
+baselines/*_results/
+model_grounding/*.log
+model_grounding/category_embeddings.pt
+model_grounding/dataset_predictions.json
+model_grounding/logs/
+model_grounding_iou/*.log
+model_grounding_iou/dataset_predictions.json
+model_grounding_iou/category_embeddings.pt
+model_grounding_iou/logs/
+tmp/
 
 CLAUDE.md
 CLAUDE.md/

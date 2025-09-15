@@ -3,6 +3,11 @@ New features
 1. train_llama_lfj.py中新增loss检测代码，检测过大以及nan，追溯对应数据
 2. models/protein_llama_lfj.py以及protein_arch_lfj.py中，新增使用门控机制融合global feature与residue feature的Q-former。
 3. 修改dataloader_frag.py及dataloader_refferring.py，支持多个可学习查询向量。
+4. 新增指代定位任务中的retrieval相关baseline，给定查询序列，返回数据库中相似性得分最高的一条，取其label为预测值。脚本见/baselines/{methods}.py，包括：
+    alignment-based methods: blasy, tm-align, foldseek。
+    sequence-based methods：plm.py支持huggingface model card的各种语言模型
+    seq&struct-based models：saprot，单独涉及到结构token的转化
+5. 新增两个ground训练模型，由于懒得写loss切换，直接复制了一份，反正最后只选一个，这部分注释先不写了，先push上去该整体model
 
 Bug fix
 1. 修正ActRefDesc对data_name的定义
