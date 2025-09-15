@@ -233,23 +233,23 @@ Frag_Ground_Group = [
 Grounding_Answer_Group = [ 
     "Alright, I've analyzed the protein sequence you provided. Here are the {task_name} categories I've identified and their positions: {contents}.", # Class_1: Position1, Position2, and Position3; Class_2: Position4, Position5, and Position6; ...
 
-    "Here is the complete set of {task_name} categories along with their respective locations in the sequence: {contents}",
+    "Here is the complete set of {task_name} categories along with their respective locations in the sequence: {contents}.",
 
-    "The analysis reveals the following {task_name} types and their positional information: {contents}",
+    "The analysis reveals the following {task_name} types and their positional information: {contents}.",
 
-    "I found the following {task_name} categories and mapped them to their respective sequence positions: {contents}",
+    "I found the following {task_name} categories and mapped them to their respective sequence positions: {contents}.",
 
-    "Based on the sequence, the {task_name} fragments are located at the following positions: {contents}",
+    "Based on the sequence, the {task_name} fragments are located at the following positions: {contents}.",
 
-    "The following {task_name} instances were detected, each listed with their start and end locations: {contents}",
+    "The following {task_name} instances were detected, each listed with their start and end locations: {contents}.",
 
-    "The protein contains these {task_name} classifications, positioned as follows: {contents}",
+    "The protein contains these {task_name} classifications, positioned as follows: {contents}.",
 
-    "The following {task_name} entries were found and localized within the sequence: {contents}",
+    "The following {task_name} entries were found and localized within the sequence: {contents}.",
 
-    "I’ve listed all detected {task_name} categories and annotated them with their sequence positions: {contents}",
+    "I’ve listed all detected {task_name} categories and annotated them with their sequence positions: {contents}.",
 
-    "The results include the following {task_name} entities and their coordinates in the sequence: {contents}"
+    "The results include the following {task_name} entities and their coordinates in the sequence: {contents}."
     ]
 
 # Function

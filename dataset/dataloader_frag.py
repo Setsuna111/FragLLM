@@ -156,6 +156,8 @@ class FragDataCollator:
         # assemble
         if self.mode == "train": 
             return {
+                'conversations_list': conversations,
+                "answers_list": answers,
                 "protein_input_ids": sequence_input_ids, 
                 "protein_attention_mask": sequence_attention_mask, 
                 "input_ids": torch.cat([
@@ -182,6 +184,8 @@ class FragDataCollator:
 
         elif self.mode == "inference":
             return {
+                "conversations_list": conversations,
+                "answers_list": answers,
                 "sequences": sequences,
                 "protein_input_ids": sequence_input_ids, 
                 "protein_attention_mask": sequence_attention_mask, 

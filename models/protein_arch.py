@@ -144,6 +144,28 @@ class FragmentAdapter(nn.Module):
                 
         return final_frag_latents
 
+# decoder for fragment positions
+# position tokens做1021分类
+class FragmentPositionDecoder(nn.Module):
+    """Decoder for fragment positions."""
+    def __init__(self, emb_dim: int, pos_num: int, num_heads: int, dropout: float) -> None:
+        """Init."""
+        super().__init__()
+        self.attn = nn.MultiheadAttention(emb_dim, num_heads, dropout=dropout, batch_first=True)
+        self.ffn = FeedForwardNetwork(emb_dim, dropout, ff_expansion=0.5)
+        self.output_layer_norm = nn.LayerNorm(emb_dim)
+        self.output_proj = nn.Linear(emb_dim, pos_num, bias=False)
+
+    def forward(self, latents: Tensor, hidden_states: Tensor) -> Tensor:
+        """Cross-attend hidden_states and latents and self-attend latents."""
+        residuals = latents
+        hidden_latents = torch.cat((hidden_states, latents), dim=-2)
+        latents, _ = self.attn(latents, hidden_latents, hidden_latents)
+        latents = self.ffn(residuals + latents) + residuals
+        out: Tensor = self.output_layer_norm(latents)
+        out = self.output_proj(out)
+        return out
+
 class ModalityAdapter(nn.Module):
     """2-layer adapter to match the hidden size of different modalities."""
     def __init__(self, protein_emb_dim: int, 
@@ -180,7 +202,7 @@ class ProteinMetaModel:
             self.esm_encoder = EsmModel.from_pretrained(config.esm_path, add_pooling_layer=False)
             self.adapter = ModalityAdapter(config.protein_emb_dim, config.intermediate_dim, config.hidden_size, config.dropout_rate)
             self.fragment_adapter = FragmentAdapter(config.protein_emb_dim, config.hidden_size, config.perceiver_latent_size, config.num_perceiver_heads, config.num_perceiver_layers, config.dropout_rate)
-
+            self.fragment_position_decoder = FragmentPositionDecoder(config.hidden_size, config.max_sequence_length+1, config.num_heads, config.dropout_rate)
     def get_esm_encoder(self):
         esm_encoder = getattr(self, "esm_encoder", None)
         if type(esm_encoder) is list:
@@ -212,6 +234,8 @@ class ProteinMetaModel:
             self.adapter = ModalityAdapter(self.config.protein_emb_dim,self.config.intermediate_dim, self.config.hidden_size, self.config.dropout_rate)
         if getattr(self, "fragment_adapter", None) is None:
             self.fragment_adapter = FragmentAdapter(self.config.protein_emb_dim, self.config.hidden_size, self.config.perceiver_latent_size,self.config.num_perceiver_heads,self.config.num_perceiver_layers,self.config.dropout_rate)
+        if getattr(self, "fragment_position_decoder", None) is None:
+            self.fragment_position_decoder = FragmentPositionDecoder(self.config.hidden_size, self.config.max_sequence_length + 1, self.config.num_perceiver_heads, self.config.dropout_rate)
 
         if model_args.load_adapter_checkpoint_dir is not None:
             adapter_weights = torch.load(model_args.load_adapter_checkpoint_dir, map_location="cpu")
@@ -242,8 +266,13 @@ class ProteinMetaForCausalLM(ABC):
             protein_input_ids, protein_attention_mask, protein_position_ids, protein_head_mask, protein_inputs_embeds, position_refs,output_attentions,output_hidden_states,return_dict
     ):
         if input_ids is not None:
-            inputs_embeds_old = self.get_model().get_input_embeddings()(input_ids)
-            inputs_embeds = inputs_embeds_old.clone()
+            # import pdb; pdb.set_trace()
+            # print("input_ids:", input_ids)
+            # print("self.get_model().get_input_embeddings():", self.get_model().get_input_embeddings())
+            # inputs_embeds_old = self.get_model().get_input_embeddings()(input_ids)
+            # inputs_embeds = inputs_embeds_old.clone()
+            inputs_embeds = self.get_model().get_input_embeddings()(input_ids)
+            # inputs_embeds = inputs_embeds_old.clone()
         if protein_input_ids is not None:
             esm_encoder = self.get_esm_encoder()
             encoder_output = esm_encoder(

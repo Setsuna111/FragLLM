@@ -145,15 +145,26 @@ class FragGroundingSingle(FragRefDataset):
              }
         ]
         position = ""
+        # for i, (start, end) in enumerate(position_grd[0]):
+        #     # position +=  f"{self.pos_start_placeholder}({start},{end}){self.pos_end_placeholder}"
+        #     position +=  f"({start},{end})"
+        #     if i < len(position_grd[0]) - 2:
+        #         position += ","
+        #     elif i == len(position_grd[0]) - 2:
+        #         position += " and "
         for i, (start, end) in enumerate(position_grd[0]):
-            # position +=  f"{self.pos_start_placeholder}({start},{end}){self.pos_end_placeholder}"
-            position +=  f"({start},{end})"
+            position +=  f"({self.pos_start_placeholder}, {self.pos_end_placeholder})"
             if i < len(position_grd[0]) - 2:
                 position += ","
             elif i == len(position_grd[0]) - 2:
                 position += " and "
+        position = f"{self.phrase_start_placeholder}{answer}:{position}{self.phrase_end_placeholder}"
         answer = answer_template.format(class_name=answer, position=position)
         return conversation, answer
+
+    def sort_position(self, position_grd):
+        position_grd.sort(key=lambda x: x[0])
+        return position_grd
     
     def process_data(self, data_item):
         sequence = data_item["sequence"]
@@ -176,6 +187,8 @@ class FragGroundingSingle(FragRefDataset):
         else:
             start = 0
             position_grd = [[[start_pos, end_pos+1] for start_pos, end_pos in zip(start_pos_list, end_pos_list)]]
+        # 将片段按初始位置排序
+        position_grd[0] = self.sort_position(position_grd[0])
         conversation, answer = self.create_conversations(sequence, answer, position_grd)
         position_ref = None
         return {
@@ -355,6 +368,32 @@ class FragGroundingGroup(FragRefDataset):
                 data_infos.append(data_item)
         return data_infos
     
+    # def create_conversations(self, sequence, answer, position_grd):
+    #     question_template = random.choice(self.question_template)
+    #     answer_template = random.choice(self.answer_template) if self.answer_template is not None else None
+    #     conversation = [
+    #         {"role": "system", "content": self.system_message},
+    #         {"role": "user", "content": question_template.format(full_sequence=self.sequence_placeholder * (len(sequence)+2), N=len(sequence), task_name=self.task_name_map[self.data_name])
+    #          }
+    #     ]
+    #     answer_i = ""
+    #     for j in range(len(answer)):
+    #         position = ""
+    #         for i, (start, end) in enumerate(position_grd[j]):
+    #             # position +=  f"{self.pos_start_placeholder}({start},{end}){self.pos_end_placeholder}"
+    #             position +=  f"({start},{end})"
+    #             if i < len(position_grd[j]) - 2:
+    #                 position += ", "
+    #             elif i == len(position_grd[j]) - 2:
+    #                 position += " and "
+    #         answer_i += f"{answer[j]} at {position}"
+    #         if j < len(answer) - 1:
+    #             answer_i += "; "
+    #         # elif j == len(answer) - 2:
+    #         #     answer_i += " and "      
+    #     answer = answer_template.format(task_name=self.task_name_map[self.data_name], contents=answer_i)
+    #     return conversation, answer
+
     def create_conversations(self, sequence, answer, position_grd):
         question_template = random.choice(self.question_template)
         answer_template = random.choice(self.answer_template) if self.answer_template is not None else None
@@ -367,19 +406,22 @@ class FragGroundingGroup(FragRefDataset):
         for j in range(len(answer)):
             position = ""
             for i, (start, end) in enumerate(position_grd[j]):
-                # position +=  f"{self.pos_start_placeholder}({start},{end}){self.pos_end_placeholder}"
-                position +=  f"({start},{end})"
+                position +=  f"({self.pos_start_placeholder},{self.pos_end_placeholder})"
                 if i < len(position_grd[j]) - 2:
                     position += ", "
                 elif i == len(position_grd[j]) - 2:
                     position += " and "
-            answer_i += f"{answer[j]} at {position}"
-            if j < len(answer) - 1:
+            answer_i += f"{self.phrase_start_placeholder}{answer[j]}:{position}{self.phrase_end_placeholder}"
+            if j < len(answer) - 2:
                 answer_i += "; "
-            # elif j == len(answer) - 2:
-            #     answer_i += " and "      
+            elif j == len(answer) - 2:
+                answer_i += " and "      
         answer = answer_template.format(task_name=self.task_name_map[self.data_name], contents=answer_i)
         return conversation, answer
+
+    def sort_position(self, position_grd):
+        position_grd.sort(key=lambda x: x[0])
+        return position_grd
     
     def process_data(self, data_item):
         sequence = data_item["sequence"]
@@ -405,7 +447,9 @@ class FragGroundingGroup(FragRefDataset):
         position_grd = []
         for frag in frags:
             answer_list.append(frag["category"])
-            position_grd.append([[frag_item["start_position"]-start, frag_item["end_position"]-start+1] for frag_item in frag["frags"]])
+            # position_grd.append([[frag_item["start_position"]-start, frag_item["end_position"]-start+1] for frag_item in frag["frags"]])
+            position_temp = [[frag_item["start_position"]-start, frag_item["end_position"]-start+1] for frag_item in frag["frags"]]
+            position_grd.append(self.sort_position(position_temp))
         conversation, answer = self.create_conversations(sequence, answer_list, position_grd)
         position_ref = None
         return {
@@ -535,10 +579,26 @@ class EvoGroundingGroup(FragGroundingGroup):
             answer_template=answer_template,
             **kwargs,
             )
+            
 if __name__ == "__main__":
+    import numpy as np
     from transformers import AutoTokenizer
     from .dataloader_frag import FragDataCollator
     root_dir = "./data"
+    def count_nested_elements_recursive(data):
+        """
+        使用递归方法提取多层嵌套列表中的每个元素。
+        """
+        data_list = []
+        # 遍历列表中的每一个元素
+        for element in data:
+            # 如果元素是列表，则递归调用函数并将结果累加
+            if isinstance(element, list):
+                data_list.extend(count_nested_elements_recursive(element))
+            # 如果元素不是列表，说明它是一个最里层的元素
+            else:
+                data_list.append(element)
+        return data_list
     # data_name = "VenusX_Motif"
     # split = "test"
     # task_type = "referring_class"
@@ -601,5 +661,10 @@ if __name__ == "__main__":
         drop_last=True
     )
     for batch in train_dataloader:
-        print(batch)
-        break
+        # print(np.array(count_nested_elements_recursive(batch["position_grds"])).max())
+        # if np.array(count_nested_elements_recursive(batch["position_grds"])).max() >= 1021:
+        #     print(count_nested_elements_recursive(batch["position_grds"]))
+        if np.array(count_nested_elements_recursive(batch["position_grds"])).min() == 0:
+            print(count_nested_elements_recursive(batch["position_grds"]))
+        # import pdb; pdb.set_trace()
+        # break

@@ -97,8 +97,10 @@ class FragRefDataset(torch.utils.data.Dataset):
             filter_sequence: bool = False,
             sequence_placeholder: str = '<|reserved_special_token_1|>',
             fragment_placeholder: str = '<|reserved_special_token_2|>',
-            pos_start_placeholder: str = '<|reserved_special_token_3|>',
-            pos_end_placeholder: str = '<|reserved_special_token_4|>',
+            pos_start_placeholder: str = '<frag_start>',
+            pos_end_placeholder: str = '<frag_end>',
+            phrase_start_placeholder: str = '<p>',
+            phrase_end_placeholder: str = '</p>',
             **kwargs,
             ):
         super().__init__()
@@ -113,6 +115,8 @@ class FragRefDataset(torch.utils.data.Dataset):
         self.fragment_placeholder = fragment_placeholder
         self.pos_start_placeholder = pos_start_placeholder
         self.pos_end_placeholder = pos_end_placeholder
+        self.phrase_start_placeholder = phrase_start_placeholder
+        self.phrase_end_placeholder = phrase_end_placeholder
         if self.data_name == "Function":
             self.ann_file = pd.read_csv(os.path.join(self.root_dir, f"{self.data_name}/{self.split}.csv"))
         else:
