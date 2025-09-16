@@ -101,6 +101,22 @@ class FragGroundingSingle(FragRefDataset):
             max_sequence_length=max_sequence_length, 
             **kwargs,
             )
+        self.data_infos = self._filter_grounding(self.data_infos)
+
+    # 过滤掉所有片段最大位置和最小位置之差大于max_sequence_length的data
+    def _filter_grounding(self, data_infos):
+        filtered_data_infos = []
+        dataset_idx = 0
+        for info in data_infos:
+            frags = info["frags"]
+            start_pos_list = [frag["start_position"] for frag in frags]
+            end_pos_list = [frag["end_position"] for frag in frags]
+            if max(end_pos_list) - min(start_pos_list) + 1 <= self.max_sequence_length:
+                info["dataset_idx"] = dataset_idx
+                dataset_idx += 1
+                filtered_data_infos.append(info)
+        print('\033[92m' + "-----{}-{}-{}: Filtered {} data ----".format(self.data_name, self.task_type, self.split, len(data_infos) - len(filtered_data_infos)) + '\033[0m')
+        return filtered_data_infos
     # 以Motif数据的Referring_Class为例
     def _load_annotations(self, ann_file):
         data_infos = []
@@ -129,14 +145,27 @@ class FragGroundingSingle(FragRefDataset):
              }
         ]
         position = ""
+        # for i, (start, end) in enumerate(position_grd[0]):
+        #     # position +=  f"{self.pos_start_placeholder}({start},{end}){self.pos_end_placeholder}"
+        #     position +=  f"({start},{end})"
+        #     if i < len(position_grd[0]) - 2:
+        #         position += ","
+        #     elif i == len(position_grd[0]) - 2:
+        #         position += " and "
         for i, (start, end) in enumerate(position_grd[0]):
-            position +=  f"{self.pos_start_placeholder}({start},{end}){self.pos_end_placeholder}"
+            # Only use start token for ProteinSAM (as requested)
+            position +=  f"{self.position_placeholder}"
             if i < len(position_grd[0]) - 2:
                 position += ","
             elif i == len(position_grd[0]) - 2:
                 position += " and "
+        position = f"{self.phrase_start_placeholder}{answer}:{position}{self.phrase_end_placeholder}"
         answer = answer_template.format(class_name=answer, position=position)
         return conversation, answer
+
+    def sort_position(self, position_grd):
+        position_grd.sort(key=lambda x: x[0])
+        return position_grd
     
     def process_data(self, data_item):
         sequence = data_item["sequence"]
@@ -145,7 +174,13 @@ class FragGroundingSingle(FragRefDataset):
         start_pos_list = [frag["start_position"] for frag in frags]
         end_pos_list = [frag["end_position"] for frag in frags]
         if len(sequence) > self.max_sequence_length and not self.filter_sequence:
-            start = random.randint(0, len(sequence) - self.max_sequence_length)
+           # 截断窗口的起点不能晚于 fragment 的起点，否则会切掉 fragment 的开头
+            max_start = min(start_pos_list)
+            # 截断窗口的起点不能早于某个位置，否则窗口的结尾会切掉 fragment 的结尾
+            min_start = max(0, max(end_pos_list) - self.max_sequence_length + 1)
+            # 有效范围 [min_start, max_start] 内随机选择一个起点并截断
+            assert min_start <= max_start, f"min_start: {min_start}, max_start: {max_start}, max_len: {self.max_sequence_length}, seq_len: {len(sequence)}"                
+            start = random.randint(min_start, max_start)
             sequence = sequence[start:start + self.max_sequence_length]
             start_new_list = [start_pos - start for start_pos in start_pos_list]
             end_new_list = [end_pos - start + 1 for end_pos in end_pos_list]
@@ -153,6 +188,8 @@ class FragGroundingSingle(FragRefDataset):
         else:
             start = 0
             position_grd = [[[start_pos, end_pos+1] for start_pos, end_pos in zip(start_pos_list, end_pos_list)]]
+        # 将片段按初始位置排序
+        position_grd[0] = self.sort_position(position_grd[0])
         conversation, answer = self.create_conversations(sequence, answer, position_grd)
         position_ref = None
         return {
@@ -162,39 +199,11 @@ class FragGroundingSingle(FragRefDataset):
                 "position_ref": position_ref,
                 "position_grd": position_grd,
                 "start": start,
+                "dataset_idx": data_item["dataset_idx"]
             }
     
     def __getitem__(self, idx: int) -> Dict[str, str]:
         data_item = self.data_infos[idx]
-        sequence = data_item["sequence"]
-        frags = data_item["frags"]
-        start_pos_list = [frag["start_position"] for frag in frags]
-        end_pos_list = [frag["end_position"] for frag in frags]
-        # 确保截断sequence时，保证fragment的完整性
-        if len(sequence) > self.max_sequence_length and not self.filter_sequence:
-            start = random.randint(0, len(sequence) - self.max_sequence_length)
-            sequence = sequence[start:start + self.max_sequence_length]
-            start_new_list = [start_pos - start for start_pos in start_pos_list]
-            end_new_list = [end_pos - start + 1 for end_pos in end_pos_list]
-        else:
-            start_new_list = start_pos_list
-            end_new_list = [end_pos + 1 for end_pos in end_pos_list]
-        while any(start_new < 0 or end_new > len(sequence) for start_new, end_new in zip(start_new_list, end_new_list)):
-            idx = random.randint(0, len(self.data_infos) - 1)
-            data_item = self.data_infos[idx]
-            sequence = data_item["sequence"]
-            frags = data_item["frags"]
-            start_pos_list = [frag["start_position"] for frag in frags]
-            end_pos_list = [frag["end_position"] for frag in frags]
-            # 确保截断sequence时，保证fragment的完整性
-            if len(sequence) > self.max_sequence_length and not self.filter_sequence:
-                start = random.randint(0, len(sequence) - self.max_sequence_length)
-                sequence = sequence[start:start + self.max_sequence_length]
-                start_new_list = [start_pos - start for start_pos in start_pos_list]
-                end_new_list = [end_pos - start + 1 for end_pos in end_pos_list]
-            else:
-                start_new_list = start_pos_list
-                end_new_list = [end_pos + 1 for end_pos in end_pos_list]
         return self.process_data(data_item)
 
 class DomainGroundingSingle(FragGroundingSingle):
@@ -328,6 +337,26 @@ class FragGroundingGroup(FragRefDataset):
             max_sequence_length=max_sequence_length, 
             **kwargs,
             )
+        self.data_infos = self._filter_grounding(self.data_infos)
+
+    # 过滤掉所有片段最大位置和最小位置之差大于max_sequence_length的data
+    def _filter_grounding(self, data_infos):
+        filtered_data_infos = []
+        dataset_idx = 0
+        for info in data_infos:
+            frags = info["fragments"]
+            start_pos_list = []
+            end_pos_list = []
+            for frag in frags:
+                start_pos_list.extend([frag_item["start_position"] for frag_item in frag["frags"]])
+                end_pos_list.extend([frag_item["end_position"] for frag_item in frag["frags"]])
+            if max(end_pos_list) - min(start_pos_list) + 1 <= self.max_sequence_length:
+                info["dataset_idx"] = dataset_idx
+                dataset_idx += 1
+                filtered_data_infos.append(info)
+        print('\033[92m' + "-----{}-{}-{}: Filtered {} data ----".format(self.data_name, self.task_type, self.split, len(data_infos) - len(filtered_data_infos)) + '\033[0m')
+        return filtered_data_infos
+
     # 以Motif数据的Referring_Class为例
     def _load_annotations(self, ann_file):
         data_infos = []
@@ -340,6 +369,32 @@ class FragGroundingGroup(FragRefDataset):
                 data_infos.append(data_item)
         return data_infos
     
+    # def create_conversations(self, sequence, answer, position_grd):
+    #     question_template = random.choice(self.question_template)
+    #     answer_template = random.choice(self.answer_template) if self.answer_template is not None else None
+    #     conversation = [
+    #         {"role": "system", "content": self.system_message},
+    #         {"role": "user", "content": question_template.format(full_sequence=self.sequence_placeholder * (len(sequence)+2), N=len(sequence), task_name=self.task_name_map[self.data_name])
+    #          }
+    #     ]
+    #     answer_i = ""
+    #     for j in range(len(answer)):
+    #         position = ""
+    #         for i, (start, end) in enumerate(position_grd[j]):
+    #             # position +=  f"{self.pos_start_placeholder}({start},{end}){self.pos_end_placeholder}"
+    #             position +=  f"({start},{end})"
+    #             if i < len(position_grd[j]) - 2:
+    #                 position += ", "
+    #             elif i == len(position_grd[j]) - 2:
+    #                 position += " and "
+    #         answer_i += f"{answer[j]} at {position}"
+    #         if j < len(answer) - 1:
+    #             answer_i += "; "
+    #         # elif j == len(answer) - 2:
+    #         #     answer_i += " and "      
+    #     answer = answer_template.format(task_name=self.task_name_map[self.data_name], contents=answer_i)
+    #     return conversation, answer
+
     def create_conversations(self, sequence, answer, position_grd):
         question_template = random.choice(self.question_template)
         answer_template = random.choice(self.answer_template) if self.answer_template is not None else None
@@ -352,46 +407,25 @@ class FragGroundingGroup(FragRefDataset):
         for j in range(len(answer)):
             position = ""
             for i, (start, end) in enumerate(position_grd[j]):
-                position +=  f"{self.pos_start_placeholder}({start},{end}){self.pos_end_placeholder}"
+                # Only use start token for ProteinSAM (as requested) 
+                position +=  f"({self.position_placeholder})"
                 if i < len(position_grd[j]) - 2:
                     position += ", "
                 elif i == len(position_grd[j]) - 2:
                     position += " and "
-            answer_i += f"{answer[j]} at {position}"
+            answer_i += f"{self.phrase_start_placeholder}{answer[j]}:{position}{self.phrase_end_placeholder}"
             if j < len(answer) - 2:
                 answer_i += "; "
             elif j == len(answer) - 2:
                 answer_i += " and "      
         answer = answer_template.format(task_name=self.task_name_map[self.data_name], contents=answer_i)
         return conversation, answer
+
+    def sort_position(self, position_grd):
+        position_grd.sort(key=lambda x: x[0])
+        return position_grd
     
     def process_data(self, data_item):
-        sequence = data_item["sequence"]
-        frags = data_item["fragments"]
-        
-        if len(sequence) > self.max_sequence_length and not self.filter_sequence:
-            start = random.randint(0, len(sequence) - self.max_sequence_length)
-            sequence = sequence[start:start + self.max_sequence_length]
-        else:
-            start = 0
-        answer_list = []
-        position_grd = []
-        for frag in frags:
-            answer_list.append(frag["category"])
-            position_grd.append([[frag_item["start_position"]-start, frag_item["end_position"]-start+1] for frag_item in frag["frags"]])
-        conversation, answer = self.create_conversations(sequence, answer_list, position_grd)
-        position_ref = None
-        return {
-                "sequence": sequence,
-                "conversation": conversation,
-                "answer": answer,
-                "position_ref": position_ref,
-                "position_grd": position_grd,
-                "start": start,
-            }
-    
-    def __getitem__(self, idx: int) -> Dict[str, str]:
-        data_item = self.data_infos[idx]
         sequence = data_item["sequence"]
         frags = data_item["fragments"]
         start_pos_list = []
@@ -401,32 +435,37 @@ class FragGroundingGroup(FragRefDataset):
             end_pos_list.extend([frag_item["end_position"] for frag_item in frag["frags"]])
         # 确保截断sequence时，保证fragment的完整性
         if len(sequence) > self.max_sequence_length and not self.filter_sequence:
-            start = random.randint(0, len(sequence) - self.max_sequence_length)
+            # 截断窗口的起点不能晚于 fragment 的起点，否则会切掉 fragment 的开头
+            max_start = min(start_pos_list)
+            # 截断窗口的起点不能早于某个位置，否则窗口的结尾会切掉 fragment 的结尾
+            min_start = max(0, max(end_pos_list) - self.max_sequence_length + 1)
+            # 有效范围 [min_start, max_start] 内随机选择一个起点并截断
+            assert min_start <= max_start, f"min_start: {min_start}, max_start: {max_start}, max_len: {self.max_sequence_length}, seq_len: {len(sequence)}"                
+            start = random.randint(min_start, max_start)
             sequence = sequence[start:start + self.max_sequence_length]
-            start_new_list = [start_pos - start for start_pos in start_pos_list]
-            end_new_list = [end_pos - start + 1 for end_pos in end_pos_list]
         else:
-            start_new_list = start_pos_list
-            end_new_list = [end_pos + 1 for end_pos in end_pos_list]
-        while any(start_new < 0 or end_new > len(sequence) for start_new, end_new in zip(start_new_list, end_new_list)):
-            idx = random.randint(0, len(self.data_infos) - 1)
-            data_item = self.data_infos[idx]
-            sequence = data_item["sequence"]
-            frags = data_item["fragments"]
-            start_pos_list = []
-            end_pos_list = []
-            for frag in frags:
-                start_pos_list.extend([frag_item["start_position"] for frag_item in frag["frags"]])
-                end_pos_list.extend([frag_item["end_position"] for frag_item in frag["frags"]])
-            # 确保截断sequence时，保证fragment的完整性
-            if len(sequence) > self.max_sequence_length and not self.filter_sequence:
-                start = random.randint(0, len(sequence) - self.max_sequence_length)
-                sequence = sequence[start:start + self.max_sequence_length]
-                start_new_list = [start_pos - start for start_pos in start_pos_list]
-                end_new_list = [end_pos - start + 1 for end_pos in end_pos_list]
-            else:
-                start_new_list = start_pos_list
-                end_new_list = [end_pos + 1 for end_pos in end_pos_list]
+            start = 0
+        answer_list = []
+        position_grd = []
+        for frag in frags:
+            answer_list.append(frag["category"])
+            # position_grd.append([[frag_item["start_position"]-start, frag_item["end_position"]-start+1] for frag_item in frag["frags"]])
+            position_temp = [[frag_item["start_position"]-start, frag_item["end_position"]-start+1] for frag_item in frag["frags"]]
+            position_grd.append(self.sort_position(position_temp))
+        conversation, answer = self.create_conversations(sequence, answer_list, position_grd)
+        position_ref = None
+        return {
+                "sequence": sequence,
+                "conversation": conversation,
+                "answer": answer,
+                "position_ref": position_ref,
+                "position_grd": position_grd,
+                "start": start,
+                "dataset_idx": data_item["dataset_idx"]
+            }
+    
+    def __getitem__(self, idx: int) -> Dict[str, str]:
+        data_item = self.data_infos[idx]
         return self.process_data(data_item)
 
 
@@ -542,10 +581,26 @@ class EvoGroundingGroup(FragGroundingGroup):
             answer_template=answer_template,
             **kwargs,
             )
+            
 if __name__ == "__main__":
+    import numpy as np
     from transformers import AutoTokenizer
     from .dataloader_frag import FragDataCollator
     root_dir = "./data"
+    def count_nested_elements_recursive(data):
+        """
+        使用递归方法提取多层嵌套列表中的每个元素。
+        """
+        data_list = []
+        # 遍历列表中的每一个元素
+        for element in data:
+            # 如果元素是列表，则递归调用函数并将结果累加
+            if isinstance(element, list):
+                data_list.extend(count_nested_elements_recursive(element))
+            # 如果元素不是列表，说明它是一个最里层的元素
+            else:
+                data_list.append(element)
+        return data_list
     # data_name = "VenusX_Motif"
     # split = "test"
     # task_type = "referring_class"
@@ -600,7 +655,7 @@ if __name__ == "__main__":
     from torch.utils.data import DataLoader
     train_dataloader = DataLoader(
         dataset,
-        batch_size=4,
+        batch_size=1,
         shuffle=True,
         num_workers=0,
         collate_fn=train_collater, 
@@ -608,5 +663,10 @@ if __name__ == "__main__":
         drop_last=True
     )
     for batch in train_dataloader:
-        print(batch)
+        # print(np.array(count_nested_elements_recursive(batch["position_grds"])).max())
+        # if np.array(count_nested_elements_recursive(batch["position_grds"])).max() >= 1021:
+        #     print(count_nested_elements_recursive(batch["position_grds"]))
+        if np.array(count_nested_elements_recursive(batch["position_grds"])).min() == 0:
+            print(count_nested_elements_recursive(batch["position_grds"]))
+        # import pdb; pdb.set_trace()
         # break

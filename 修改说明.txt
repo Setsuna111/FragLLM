@@ -16,10 +16,25 @@ Bug fix
 Others
 1. dataset/dataloader_frag.py存在一些随机数bug的古战场遗迹，注意这些注释不要传到main，包括此条
 
+0910 djy
+1. scripts/zero2.json中设置overlap_comm==false，避免训练过程中gradnorm出现nan
+
+0909 djy
+1. dataset/dataloader_grounding.py中删除了定位任务中位置区间前后的特殊token
+2. eval/中添加了eval/evaluate_grounding.py，eval/evaluate_grounding.sh，eval/metric_group_grounding.py，eval/metric_group_grounding.sh，eval/metric_single_grounding.py和eval/metric_single_grounding.sh， 用于grounding任务的推理和指标计算
+
+0905 djy
+1. scripts/train_llama.py中注释了transformers.trainer_utils.set_seed(training_args.seed)
+2. dataset/dataloader_refferring.py中修正了ActDesc任务数据加载时读取的数据集名称
+3. eval/evaluate_function_desc.py中在写入结果时加入了dataset_idxs列，用于去除重复
+4. eval/evaluate_desc_benchmark.py中对dataset_idxs列进行了去重
+5. eval/evaluate_function_desc.py中设置了write_header判断条件，保证追加写入评估结果时不会添加header
+
 0904 djy
 1. 更新了requirements.text
 2. README.md中添加了环境安装的流程
 3. dataset/dataloader_frag.py中将HybridDataset中随机加载样本的方式更改为了根据索引加载样本
+4. 修改了dataset/dataloader_grounding.py中对超长sequence的截断方式，当片段最大间距大于1021时，截断片段尾部；当序列长度大于1021，片段最大间距小于1021时，计算新序列起点的安全范围，保证片段不被截断，随后在安全范围内随机采样起点；当序列长度小于1021时，正常处理。
 
 0904 lfj
 1. 进一步修改了eval/evaluate_reference.py在多GPU并行时的数据问题。首先在dataset/dataloader_frag.py，dataset/dataloader_refferring.py，dataset/dataloader_function.py中添加了返回数据在数据集中dataset_idx的操作，随后于eval/evaluate_reference.py对多卡并行推理结果依据eval/evaluate_reference.py去重。

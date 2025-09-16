@@ -45,8 +45,7 @@ class Esm2LlamaInstructConfig(PretrainedConfig):
             # standalone attributes
             sequence_placeholder_id: int = 128003, 
             fragment_placeholder_id: int = 128005,
-            pos_start_placeholder_id: int = 128011,
-            pos_end_placeholder_id: int = 128012,
+            position_placeholder_id: int = 128011,
             perceiver_latent_size: int = 128,
             num_perceiver_heads: int = 8,
             num_perceiver_layers: int = 2,
@@ -62,8 +61,7 @@ class Esm2LlamaInstructConfig(PretrainedConfig):
         self.llama_config = llama_config
         self.sequence_placeholder_id = sequence_placeholder_id
         self.fragment_placeholder_id = fragment_placeholder_id
-        self.pos_start_placeholder_id = pos_start_placeholder_id
-        self.pos_end_placeholder_id = pos_end_placeholder_id
+        self.position_placeholder_id = position_placeholder_id
         self.perceiver_latent_size = perceiver_latent_size
         self.num_perceiver_heads = num_perceiver_heads
         self.num_perceiver_layers = num_perceiver_layers

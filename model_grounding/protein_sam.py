@@ -27,7 +27,7 @@ class ProteinSAM(nn.Module):
     def __init__(
         self,
         esm_model_path: str,
-        llama_model_path: str,
+        llama_model_path: Optional[str] = None,
         output_llama_layer: int = 16,
         decoder_num_heads: int = 8,
         decoder_num_layers: int = 2,
@@ -36,13 +36,15 @@ class ProteinSAM(nn.Module):
         dropout_rate: float = 0.1,
         device: str = "cuda",
         use_category_cache: bool = True,
-        category_embeddings_path: Optional[str] = None
+        category_embeddings_path: Optional[str] = None,
+        use_external_embeddings: bool = False  # New parameter for direct embedding input
     ):
         super().__init__()
         
         self.device = device
         self.max_sequence_length = max_sequence_length
         self.use_category_cache = use_category_cache
+        self.use_external_embeddings = use_external_embeddings
         
         # Initialize protein encoder
         self.protein_encoder = ProteinEncoder(
@@ -50,19 +52,46 @@ class ProteinSAM(nn.Module):
             device=device
         )
         
-        # Initialize prompt encoder
-        self.prompt_encoder = PromptEncoder(
-            llama_model_path=llama_model_path,
-            protein_hidden_size=self.protein_encoder.hidden_size,
-            output_llama_layer=output_llama_layer,
-            max_sequence_length=max_sequence_length,
-            dropout_rate=dropout_rate,
-            use_cache=use_category_cache
-        )
-        
-        # Load category embeddings if provided
-        if use_category_cache and category_embeddings_path is not None:
-            self.load_category_embeddings(category_embeddings_path)
+        # Initialize prompt encoder only if not using external embeddings
+        if not use_external_embeddings:
+            self.prompt_encoder = PromptEncoder(
+                llama_model_path=llama_model_path,
+                protein_hidden_size=self.protein_encoder.hidden_size,
+                output_llama_layer=output_llama_layer,
+                max_sequence_length=max_sequence_length,
+                dropout_rate=dropout_rate,
+                use_cache=use_category_cache
+            )
+            
+            # Load category embeddings if provided
+            if use_category_cache and category_embeddings_path is not None:
+                self.load_category_embeddings(category_embeddings_path)
+        else:
+            # For external embeddings, still need prompt encoder components for weight loading
+            self.prompt_encoder = None
+            self.protein_hidden_size = self.protein_encoder.hidden_size
+            self.output_llama_layer = output_llama_layer
+            
+            # Initialize prompt encoder components that exist in pretrained weights
+            llama_hidden_size = 4096  # Default LLaMA hidden size
+            self.text_projection = nn.Sequential(
+                nn.Linear(llama_hidden_size, self.protein_hidden_size),
+                nn.LayerNorm(self.protein_hidden_size),
+                nn.ReLU(),
+                nn.Dropout(dropout_rate)
+            )
+            self.layer_norm = nn.LayerNorm(self.protein_hidden_size)
+            self.dropout = nn.Dropout(dropout_rate)
+            
+            # Create sinusoidal positional encoding
+            import math
+            pe = torch.zeros(max_sequence_length, self.protein_hidden_size)
+            position = torch.arange(0, max_sequence_length).unsqueeze(1).float()
+            div_term = torch.exp(torch.arange(0, self.protein_hidden_size, 2).float() *
+                               -(math.log(10000.0) / self.protein_hidden_size))
+            pe[:, 0::2] = torch.sin(position * div_term)
+            pe[:, 1::2] = torch.cos(position * div_term)
+            self.register_buffer('position_encoding', pe)
         
         # Initialize position decoder
         self.position_decoder = PositionDecoder(
@@ -97,7 +126,8 @@ class ProteinSAM(nn.Module):
         categories: Optional[list] = None,                     # List of category names - preferred
         point_positions: Optional[torch.Tensor] = None,       # (batch_size,)
         start_labels: Optional[torch.Tensor] = None,          # (batch_size,)
-        end_labels: Optional[torch.Tensor] = None             # (batch_size,)
+        end_labels: Optional[torch.Tensor] = None,            # (batch_size,)
+        external_prompt_embeddings: Optional[torch.Tensor] = None  # (batch_size, 1, hidden_size) - Direct embedding input
     ) -> Dict[str, torch.Tensor]:
         """
         Forward pass of ProteinSAM model.
@@ -122,22 +152,62 @@ class ProteinSAM(nn.Module):
             attention_mask=protein_attention_mask
         )  # (batch_size, seq_len, hidden_size)
         
-        # Get text token (without position encoding)
-        text_token = self.prompt_encoder(
-            text_input_ids=text_input_ids,
-            text_attention_mask=text_attention_mask,
-            categories=categories
-        )  # (batch_size, 1, hidden_size)
+        # Get text token - either from external embeddings or internal encoder
+        if self.use_external_embeddings and external_prompt_embeddings is not None:
+            # Use external prompt embeddings, apply text_projection for dimension matching
+            text_token_raw = external_prompt_embeddings  # (batch_size, 1, llama_hidden_size)
+            # Reshape for projection if needed
+            batch_size, seq_len, hidden_size = text_token_raw.shape
+            text_token_flat = text_token_raw.view(batch_size * seq_len, hidden_size)
+            # Apply text projection 
+            text_token_projected = self.text_projection(text_token_flat)
+            # Apply layer norm and dropout like in original prompt encoder
+            text_token_projected = self.layer_norm(text_token_projected)
+            text_token_projected = self.dropout(text_token_projected)
+            # Reshape back
+            text_token = text_token_projected.view(batch_size, seq_len, -1)
+        else:
+            # Use internal prompt encoder (original behavior)
+            if self.prompt_encoder is None:
+                raise ValueError("prompt_encoder is None but external_prompt_embeddings not provided")
+            text_token = self.prompt_encoder(
+                text_input_ids=text_input_ids,
+                text_attention_mask=text_attention_mask,
+                categories=categories
+            )  # (batch_size, 1, hidden_size)
         
         # Combine protein embeddings and text token
         combined_embeddings = torch.cat([text_token, protein_embeddings], dim=1)  # (batch_size, seq_len+1, hidden_size)
         
         # Add positional encoding to combined embeddings
-        combined_embeddings_with_pos = self.prompt_encoder.get_positional_encoding(
-            embeddings=combined_embeddings,
-            point_positions=point_positions,
-            prompt_token_idx=0  # Text token is at index 0
-        )  # (batch_size, seq_len+1, hidden_size)
+        if self.use_external_embeddings:
+            # For external embeddings, use simple positional encoding
+            seq_len_with_prompt = combined_embeddings.shape[1]
+            # Handle case where sequence is longer than position_encoding buffer
+            if seq_len_with_prompt > self.position_encoding.shape[0]:
+                # Extend position encoding dynamically
+                import math
+                device = self.position_encoding.device
+                dtype = self.position_encoding.dtype
+                pe = torch.zeros(seq_len_with_prompt, self.protein_hidden_size, device=device, dtype=dtype)
+                position = torch.arange(0, seq_len_with_prompt, device=device).unsqueeze(1).float()
+                div_term = torch.exp(torch.arange(0, self.protein_hidden_size, 2, device=device).float() *
+                                   -(math.log(10000.0) / self.protein_hidden_size))
+                pe[:, 0::2] = torch.sin(position * div_term)
+                pe[:, 1::2] = torch.cos(position * div_term)
+                pos_encodings = pe.unsqueeze(0).expand(combined_embeddings.shape[0], -1, -1)
+            else:
+                pos_encodings = self.position_encoding[:seq_len_with_prompt].unsqueeze(0).expand(
+                    combined_embeddings.shape[0], -1, -1
+                )
+            combined_embeddings_with_pos = combined_embeddings + pos_encodings
+        else:
+            # Use original positional encoding logic with point prompts
+            combined_embeddings_with_pos = self.prompt_encoder.get_positional_encoding(
+                embeddings=combined_embeddings,
+                point_positions=point_positions,
+                prompt_token_idx=0  # Text token is at index 0
+            )  # (batch_size, seq_len+1, hidden_size)
         
         # Split back to text token and protein embeddings
         text_token_with_pos = combined_embeddings_with_pos[:, 0:1, :]  # (batch_size, 1, hidden_size)
@@ -331,13 +401,23 @@ class ProteinSAM(nn.Module):
         checkpoint = torch.load(load_path, map_location=self.device)
         model_state_dict = checkpoint['model_state_dict']
         
-        # Load only trainable parameters
+        # Load parameters, handling prompt_encoder weights for external embeddings mode
         current_state_dict = self.state_dict()
-        for name, param in model_state_dict.items():
-            if name in current_state_dict:
-                current_state_dict[name].copy_(param)
+        loaded_keys = []
         
-        print(f"Model loaded from {load_path}")
+        for name, param in model_state_dict.items():
+            # Handle prompt_encoder weights when using external embeddings
+            if self.use_external_embeddings and name.startswith('prompt_encoder.'):
+                # Map prompt_encoder weights to direct components
+                component_name = name.replace('prompt_encoder.', '')
+                if component_name in current_state_dict:
+                    current_state_dict[component_name].copy_(param)
+                    loaded_keys.append(component_name)
+            elif name in current_state_dict:
+                current_state_dict[name].copy_(param)
+                loaded_keys.append(name)
+        
+        print(f"Model loaded from {load_path}, loaded {len(loaded_keys)} parameters")
     
     def get_trainable_parameters(self):
         """Get count of trainable parameters."""
