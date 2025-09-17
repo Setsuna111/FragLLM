@@ -406,7 +406,7 @@ class FragGroundingGroup(FragRefDataset):
         for j in range(len(answer)):
             position = ""
             for i, (start, end) in enumerate(position_grd[j]):
-                position +=  f"({self.pos_start_placeholder},{self.pos_end_placeholder})"
+                position +=  f"({self.pos_start_placeholder}, {self.pos_end_placeholder})"
                 if i < len(position_grd[j]) - 2:
                     position += ", "
                 elif i == len(position_grd[j]) - 2:
@@ -579,7 +579,7 @@ class EvoGroundingGroup(FragGroundingGroup):
             answer_template=answer_template,
             **kwargs,
             )
-            
+
 if __name__ == "__main__":
     import numpy as np
     from transformers import AutoTokenizer
