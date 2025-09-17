@@ -17,6 +17,37 @@ class ProteinLlamaModel(ProteinMetaModel, LlamaModel):
     def __init__(self, config: LlamaConfig):
         super(ProteinLlamaModel, self).__init__(config)
 
+# def calculate_dice_loss(predictions: torch.Tensor, ground_truth: torch.Tensor, mask_count: float, scale_factor=1000,
+#                         epsilon=1e-6):
+#     """
+#     Calculate the DICE loss, a measure similar to generalized IOU for masks.
+#     """
+#     predictions = predictions.sigmoid()
+#     predictions = predictions.flatten(1, 2)
+#     ground_truth = ground_truth.flatten(1, 2)
+
+#     intersection = 2 * (predictions / scale_factor * ground_truth).sum(dim=-1)
+#     union = (predictions / scale_factor).sum(dim=-1) + (ground_truth / scale_factor).sum(dim=-1)
+
+#     dice_loss = 1 - (intersection + epsilon) / (union + epsilon)
+#     dice_loss = dice_loss.sum() / (mask_count + 1e-8)
+#     return dice_loss
+
+# def compute_sigmoid_cross_entropy(predictions: torch.Tensor, targets: torch.Tensor, mask_count: float):
+#     """
+#     Compute sigmoid cross-entropy loss for binary classification.
+#     """
+#     targets = targets.clamp(min=0.0, max=1.0)
+#     loss = F.binary_cross_entropy_with_logits(predictions, targets, reduction="none")
+#     loss = loss.flatten(1, 2).mean(1)
+#     loss = loss.sum() / (mask_count + 1e-8)
+#     if loss < 0:
+#         print("---------1:", predictions)
+#         print("---------2:", targets)
+#         print("Predictions stats:", predictions.min().item(), predictions.max().item())
+#         print("Targets stats:", targets.min().item(), targets.max().item())
+#     return loss
+
 def count_nested_elements_recursive(data):
     """
     使用递归方法计算多层嵌套列表中最里层元素的总数。
@@ -111,6 +142,14 @@ class ProteinLlamaForCausalLM(LlamaForCausalLM, ProteinMetaForCausalLM):
                 input_ids, position_ids, attention_mask, past_key_values, labels,
                 protein_input_ids, protein_attention_mask, protein_position_ids, protein_head_mask, protein_inputs_embeds, position_refs, output_attentions,output_hidden_states,return_dict
             )
+        if return_encoder_outputs:
+            return encoder_output
+        
+        if return_decoder_inputs:
+            return inputs_embeds, attention_mask
+        
+        if return_adapter_outputs:
+            return adapter_output, encoder_attention_mask
         output = super().forward(
                 input_ids=input_ids,
                 attention_mask=attention_mask,
@@ -123,20 +162,37 @@ class ProteinLlamaForCausalLM(LlamaForCausalLM, ProteinMetaForCausalLM):
                 output_hidden_states=True,
                 return_dict=True
             )
+        # import pdb; pdb.set_trace()
         hidden_states = output['hidden_states'][-1]
+        # id和hidden states需要错位
+        hidden_states = hidden_states[:,:-1,:]
         # 获取protein的hidden states
-        protein_masks = self._create_seq_mask(input_ids_old)
+        # protein_masks = self._create_seq_mask(input_ids_old[:,1:])
         # 获取postions的hidden states
-        position_masks = self._create_postoken_mask(input_ids_old)
+        position_masks = self._create_postoken_mask(input_ids_old[:,1:])
         # print("position_masks:", position_masks)
         if position_masks.any():
+            # position_grds_pred = []
+            # for i, position_mask in enumerate(position_masks):
+            #     if position_mask.any():
+            #         assert position_grds[i] is not None
+            #         assert count_nested_elements_recursive(position_grds[i]) == position_mask.sum(), "count_nested_elements_recursive(position_grds[i]) != position_mask.sum()"
+            #         postoken_hidden_states = hidden_states[i][position_mask] # (num_positions, 1024)
+            #         protein_hidden_states = hidden_states[i][protein_masks[i]] #(num_proteins, 1024)
+            #         position_grds_pred.append(self.get_model().fragment_position_decoder(postoken_hidden_states.unsqueeze(1).contiguous(), protein_hidden_states.unsqueeze(0).expand(postoken_hidden_states.shape[0], -1, -1).contiguous()).squeeze(1))
+            #     else:
+            #         assert position_grds[i] is None
+            #         position_grds_pred.append(None)
+            # 使用adapter输出的esm hidden states预测位置
             position_grds_pred = []
             for i, position_mask in enumerate(position_masks):
                 if position_mask.any():
                     assert position_grds[i] is not None
                     assert count_nested_elements_recursive(position_grds[i]) == position_mask.sum(), "count_nested_elements_recursive(position_grds[i]) != position_mask.sum()"
                     postoken_hidden_states = hidden_states[i][position_mask] # (num_positions, 1024)
-                    protein_hidden_states = hidden_states[i][protein_masks[i]] #(num_proteins, 1024)
+                    protein_hidden_states = adapter_output[i][encoder_attention_mask[i].bool()]#(num_proteins, 1024)
+                    # TODO: 用序列做0，1分类时，要注意对ESM_hidden_states进行掐头去尾
+                    # protein_hidden_states = adapter_output[i][encoder_attention_mask[i].bool()][1:-1]
                     position_grds_pred.append(self.get_model().fragment_position_decoder(postoken_hidden_states.unsqueeze(1).contiguous(), protein_hidden_states.unsqueeze(0).expand(postoken_hidden_states.shape[0], -1, -1).contiguous()).squeeze(1))
                 else:
                     assert position_grds[i] is None
@@ -168,7 +224,7 @@ class ProteinLlamaForCausalLM(LlamaForCausalLM, ProteinMetaForCausalLM):
                 for position_grd in batch_position_grd: # group层
                     for position in position_grd: # position层
                         position_labels.append(position[0])
-                        position_labels.append(position[1])
+                        position_labels.append(position[1]) # TODO:position_labels.append(position[1]-1),用序列作为二分类时，要注意end_index-1
                         num_positions += 2
             else:
                 continue 
@@ -281,7 +337,7 @@ class ProteinLlamaForCausalLM(LlamaForCausalLM, ProteinMetaForCausalLM):
         grounding_inference: bool = False,
         **kwargs
     ) -> Union[GenerateOutput, torch.LongTensor]:
-        input_ids, position_ids, attention_mask, past_key_values, inputs_embeds, labels, encoder_output, adapter_output, encoder_attention_mask = self.prepare_inputs_labels_for_protein(
+        _, position_ids, attention_mask, past_key_values, inputs_embeds, labels, encoder_output, adapter_output, encoder_attention_mask = self.prepare_inputs_labels_for_protein(
                 input_ids, None, attention_mask, None, None,
                 protein_input_ids, protein_attention_mask, None, None, protein_inputs_embeds, position_refs,None,None,None
             )
@@ -289,25 +345,45 @@ class ProteinLlamaForCausalLM(LlamaForCausalLM, ProteinMetaForCausalLM):
             position_ids=position_ids,
             attention_mask=attention_mask,
             inputs_embeds=inputs_embeds,
+            return_dict_in_generate=True,
+            output_hidden_states=True,
+            return_dict=True,
             **kwargs
         )
         generate_output_ids = generate_output["sequences"]
+        """使用LLaMA输出的proteins hidden states预测位置"""
+        # # 推理时，generate_output["hidden_states"]是一个tuple, 第一个元素包含input_ids的hidden states,其余元素为(1， L， D)
+        # output_hidden_states = [generate_output["hidden_states"][0][-1]] # (B, input_ids_length, D) 
+        # for hidden_state in generate_output["hidden_states"][1:]:
+        #     output_hidden_states.append(hidden_state[-1]) # (B, 1, D)
+        # output_hidden_states = torch.cat(output_hidden_states, dim=1) # (B, L_gen, D)
+        """使用adapter输出的proteins hidden states预测位置"""
         # 推理时，generate_output["hidden_states"]是一个tuple, 第一个元素包含input_ids的hidden states,其余元素为(1， L， D)
-        output_hidden_states = [generate_output["hidden_states"][0][-1]] # (B, input_ids_length, D) 
+        output_hidden_states = [generate_output["hidden_states"][0][-1][:,-1:,:]] # (B, 1, D) 
         for hidden_state in generate_output["hidden_states"][1:]:
             output_hidden_states.append(hidden_state[-1]) # (B, 1, D)
         output_hidden_states = torch.cat(output_hidden_states, dim=1) # (B, L_gen, D)
+
         if not grounding_inference:
             return generate_output_ids
         else:
+            """使用LLaMA输出的proteins hidden states预测位置"""
+            # all_ids = torch.cat([input_ids[:,1:], generate_output_ids], dim=1)
+            # position_masks = self._create_postoken_mask(all_ids)
+            # protein_masks = self._create_seq_mask(all_ids)
+            """使用adapter输出的proteins hidden states预测位置"""
             position_masks = self._create_postoken_mask(generate_output_ids)
-            protein_masks = self._create_seq_mask(generate_output_ids)
+
             if position_masks.any():
                 position_grds_pred = []
                 for i, position_mask in enumerate(position_masks):
                     if position_mask.any():
+                        """使用LLaMA输出的proteins hidden states预测位置"""
+                        # postoken_hidden_states = output_hidden_states[i][position_mask] # (num_positions, 4096)
+                        # protein_hidden_states = output_hidden_states[i][protein_masks[i]] #(num_proteins, 4096)
+                        """使用adapter输出的proteins hidden states预测位置"""
                         postoken_hidden_states = output_hidden_states[i][position_mask] # (num_positions, 4096)
-                        protein_hidden_states = output_hidden_states[i][protein_masks[i]] #(num_proteins, 4096)
+                        protein_hidden_states = adapter_output[i][encoder_attention_mask[i].bool()] #(num_proteins, 4096)
                         position_grds_pred.append(self.get_model().fragment_position_decoder(postoken_hidden_states.unsqueeze(1).contiguous(), protein_hidden_states.unsqueeze(0).expand(postoken_hidden_states.shape[0], -1, -1).contiguous()).squeeze(1))
                     # else:
                     #     assert position_grds[i] is None
@@ -323,13 +399,14 @@ class ProteinLlamaForCausalLM(LlamaForCausalLM, ProteinMetaForCausalLM):
                 position_masks_nums = position_masks.sum(dim=-1)
                 position_masks_offset = torch.cumsum(position_masks_nums, dim=-1)
                 position_masks_offset = torch.cat([torch.zeros(1).long().cuda(), position_masks_offset], dim=0)
-                position_preds_batch = []
+                position_grds_batch = []
                 for i in range(len(position_masks_offset)-1):
                     start_index = position_masks_offset[i]
                     end_index = position_masks_offset[i+1]
-                    position_preds_batch.append(position_preds[start_index:end_index])
+                    position_grds_batch.append(position_preds[start_index:end_index])
         # 将预测值恢复成坐标位置
-        return position_grds_pred, position_grds_batch
+
+        return generate_output_ids, position_grds_batch
     
 AutoConfig.register("protein_llama", ProteinLlamaConfig)
 AutoModelForCausalLM.register(ProteinLlamaConfig, ProteinLlamaForCausalLM)
