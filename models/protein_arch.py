@@ -145,7 +145,6 @@ class FragmentAdapter(nn.Module):
         return final_frag_latents
 
 # decoder for fragment positions
-# position tokens做1021分类
 class FragmentPositionDecoder(nn.Module):
     """Decoder for fragment positions."""
     def __init__(self, emb_dim: int, pos_num: int, num_heads: int, dropout: float) -> None:
@@ -202,7 +201,7 @@ class ProteinMetaModel:
             self.esm_encoder = EsmModel.from_pretrained(config.esm_path, add_pooling_layer=False)
             self.adapter = ModalityAdapter(config.protein_emb_dim, config.intermediate_dim, config.hidden_size, config.dropout_rate)
             self.fragment_adapter = FragmentAdapter(config.protein_emb_dim, config.hidden_size, config.perceiver_latent_size, config.num_perceiver_heads, config.num_perceiver_layers, config.dropout_rate)
-            self.fragment_position_decoder = FragmentPositionDecoder(config.hidden_size, config.max_sequence_length+1, config.num_heads, config.dropout_rate)
+            self.fragment_position_decoder = FragmentPositionDecoder(config.hidden_size, config.max_sequence_length+1, config.num_perceiver_heads, config.dropout_rate)
     def get_esm_encoder(self):
         esm_encoder = getattr(self, "esm_encoder", None)
         if type(esm_encoder) is list:
