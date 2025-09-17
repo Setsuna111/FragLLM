@@ -1,3 +1,18 @@
+0917 djy
+1. models/protein_llama.py和models/protein_arch.py
+    （1）添加了postoken解码层，每个postoken做1022分类进行定位；
+    （2）对齐了hidden_states和input_ids；
+    （3）使用self.adapter映射后的protein seqs特征进行位置预测；
+2. dataset/dataloader_grounding.py 调整了group定位中(<frag_start>, <frag_end>)的模板间隙；
+3. eval_addtoken 添加了基于pos_token_decoder进行定位的评估脚本
+4. models/protein_llama_L.py scripts/train_llama_addtoken_L.py merge_lora_weights_checkpoint_addtoken_L.py merge_lora_weights_addtoken_L.py 
+    （1）添加了使用protein_seq进行0，1分类定位的模型架构、训练脚本和权重合并脚本；
+    （2）models/protein_llama_L.py中对protein seqs特征进行了掐头去尾（esm会在开始和末尾添加两个特殊token）；
+    （3）models/protein_llama_L.py中输入标签时对end_index进行了"-1"（区间是左闭右开`[start_index, end_index)`）;
+    （4）pos_decoder中输出的结果为(num_positions,1,seq_L)形状；
+    （5）generate函数中，位置解码时，end_index处结果+1；
+5. merge_lora_weights_addtoken.py merge_lora_weights_checkpoint_addtoken.py 添加了基于postoken进行1022分类定位的权重 合并脚本
+
 0910 djy
 1. scripts/zero2.json中设置overlap_comm==false，避免训练过程中gradnorm出现nan
 
