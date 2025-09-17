@@ -424,7 +424,11 @@ class ProteinLlamaForCausalLM(LlamaForCausalLM, ProteinMetaForCausalLM):
                         position_grds_batch.append([])
                     else:
                         assert len(position_grds_pred[i]) == position_masks_nums[i], "len(position_grds_pred[i]) != position_masks_nums[i]"
-                        position_grds_batch.append(position_grds_pred[i].argmax(dim=-1))
+                        # 奇数位置坐标+1，偶数位置坐标不变
+                        position_grds_pred_i = position_grds_pred[i].argmax(dim=-1)
+                        position_grds_pred_i[1::2] += 1
+                        position_grds_batch.append(position_grds_pred_i)
+
         # 将预测值恢复成坐标位置
 
         return generate_output_ids, position_grds_batch
