@@ -5,7 +5,7 @@ Single GPU training for protein functional region grounding.
 
 import argparse
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "5"
+os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 import random
 import numpy as np
 import torch
@@ -318,15 +318,15 @@ def main():
                        help="Dropout rate")
     
     # Dataset-specific arguments
-    parser.add_argument("--null_position_prob", type=float, default=0.2,
+    parser.add_argument("--null_position_prob", type=float, default=0.0,
                        help="Probability to set position prompt to null")
-    parser.add_argument("--random_position_prob", type=float, default=0.1,
+    parser.add_argument("--random_position_prob", type=float, default=0.0,
                        help="Probability to set random position")
-    parser.add_argument("--position_noise_std", type=float, default=5,
+    parser.add_argument("--position_noise_std", type=float, default=20,
                        help="Standard deviation for position noise")
     
     # Other arguments
-    parser.add_argument("--output_dir", type=str, default="./checkpoints_grounding_3e-4lr",
+    parser.add_argument("--output_dir", type=str, default="./checkpoints_grounding",
                        help="Output directory for model checkpoints")
     parser.add_argument("--log_dir", type=str, default="./logs",
                        help="Directory for logs")

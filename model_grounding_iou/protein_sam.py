@@ -27,7 +27,7 @@ class ProteinSAM(nn.Module):
     def __init__(
         self,
         esm_model_path: str,
-        llama_model_path: str,
+        llama_model_path: Optional[str] = None,
         output_llama_layer: int = 16,
         decoder_num_heads: int = 8,
         decoder_num_layers: int = 2,
@@ -36,13 +36,15 @@ class ProteinSAM(nn.Module):
         dropout_rate: float = 0.1,
         device: str = "cuda",
         use_category_cache: bool = True,
-        category_embeddings_path: Optional[str] = None
+        category_embeddings_path: Optional[str] = None,
+        use_external_embeddings: bool = False  # New parameter for direct embedding input
     ):
         super().__init__()
         
         self.device = device
         self.max_sequence_length = max_sequence_length
         self.use_category_cache = use_category_cache
+        self.use_external_embeddings = use_external_embeddings
         
         # Initialize protein encoder
         self.protein_encoder = ProteinEncoder(
@@ -50,19 +52,50 @@ class ProteinSAM(nn.Module):
             device=device
         )
         
-        # Initialize prompt encoder
-        self.prompt_encoder = PromptEncoder(
-            llama_model_path=llama_model_path,
-            protein_hidden_size=self.protein_encoder.hidden_size,
-            output_llama_layer=output_llama_layer,
-            max_sequence_length=max_sequence_length,
-            dropout_rate=dropout_rate,
-            use_cache=use_category_cache
-        )
-        
-        # Load category embeddings if provided
-        if use_category_cache and category_embeddings_path is not None:
-            self.load_category_embeddings(category_embeddings_path)
+        # Initialize prompt encoder only if not using external embeddings
+        if not use_external_embeddings:
+            self.prompt_encoder = PromptEncoder(
+                llama_model_path=llama_model_path,
+                protein_hidden_size=self.protein_encoder.hidden_size,
+                output_llama_layer=output_llama_layer,
+                max_sequence_length=max_sequence_length,
+                dropout_rate=dropout_rate,
+                use_cache=use_category_cache
+            )
+            
+            # Load category embeddings if provided
+            if use_category_cache and category_embeddings_path is not None:
+                self.load_category_embeddings(category_embeddings_path)
+        else:
+            # For external embeddings, still need prompt encoder components for weight loading
+            self.prompt_encoder = None
+            self.protein_hidden_size = self.protein_encoder.hidden_size
+            self.output_llama_layer = output_llama_layer
+            
+            # Initialize prompt encoder components that exist in pretrained weights
+            llama_hidden_size = 4096  # Default LLaMA hidden size
+            self.text_projection = nn.Sequential(
+                nn.Linear(llama_hidden_size, self.protein_hidden_size),
+                nn.LayerNorm(self.protein_hidden_size),
+                nn.ReLU(),
+                nn.Dropout(dropout_rate)
+            )
+            self.layer_norm = nn.LayerNorm(self.protein_hidden_size)
+            self.dropout = nn.Dropout(dropout_rate)
+            
+            # Create sinusoidal positional encoding with buffer for BOS/EOS tokens
+            import math
+            
+            # actual_max_length = max_sequence_length + 2 + 1  # +2 for BOS/EOS tokens from ESM, +1 for text token
+            actual_max_length = max_sequence_length + 1  # +1 for text token
+
+            pe = torch.zeros(actual_max_length, self.protein_hidden_size)
+            position = torch.arange(0, actual_max_length).unsqueeze(1).float()
+            div_term = torch.exp(torch.arange(0, self.protein_hidden_size, 2).float() *
+                               -(math.log(10000.0) / self.protein_hidden_size))
+            pe[:, 0::2] = torch.sin(position * div_term)
+            pe[:, 1::2] = torch.cos(position * div_term)
+            self.register_buffer('position_encoding', pe)
         
         # Initialize position decoder
         self.position_decoder = PositionDecoder(
@@ -75,7 +108,7 @@ class ProteinSAM(nn.Module):
         
         # Loss functions
         self.ce_loss_fn = nn.CrossEntropyLoss(ignore_index=-1)
-        self.smooth = 1e-6  # For IoU loss smoothing
+        self.smooth = 1e-3  # For Dice loss smoothing
     
     def load_category_embeddings(self, embeddings_path: str):
         """Load pre-computed category embeddings."""
@@ -98,7 +131,8 @@ class ProteinSAM(nn.Module):
         categories: Optional[list] = None,                     # List of category names - preferred
         point_positions: Optional[torch.Tensor] = None,       # (batch_size,)
         start_labels: Optional[torch.Tensor] = None,          # (batch_size,)
-        end_labels: Optional[torch.Tensor] = None             # (batch_size,)
+        end_labels: Optional[torch.Tensor] = None,            # (batch_size,)
+        external_prompt_embeddings: Optional[torch.Tensor] = None  # (batch_size, 1, hidden_size) - Direct embedding input
     ) -> Dict[str, torch.Tensor]:
         """
         Forward pass of ProteinSAM model.
@@ -123,22 +157,53 @@ class ProteinSAM(nn.Module):
             attention_mask=protein_attention_mask
         )  # (batch_size, seq_len, hidden_size)
         
-        # Get text token (without position encoding)
-        text_token = self.prompt_encoder(
-            text_input_ids=text_input_ids,
-            text_attention_mask=text_attention_mask,
-            categories=categories
-        )  # (batch_size, 1, hidden_size)
+        protein_embeddings = protein_embeddings[:, 1:-1, :]  # Remove BOS/EOS tokens
+        protein_attention_mask = protein_attention_mask[:, 1:-1]  # Adjust attention mask
+        seq_len = seq_len - 2  # Adjusted sequence length after removing BOS/EOS
+        
+        # Get text token - either from external embeddings or internal encoder
+        if self.use_external_embeddings and external_prompt_embeddings is not None:
+            # Use external prompt embeddings, apply text_projection for dimension matching
+            text_token_raw = external_prompt_embeddings  # (batch_size, 1, llama_hidden_size)
+            # Reshape for projection if needed
+            batch_size, seq_len_text, hidden_size = text_token_raw.shape
+            text_token_flat = text_token_raw.view(batch_size * seq_len_text, hidden_size)
+            # Apply text projection 
+            text_token_projected = self.text_projection(text_token_flat)
+            # Apply layer norm and dropout like in original prompt encoder
+            text_token_projected = self.layer_norm(text_token_projected)
+            text_token_projected = self.dropout(text_token_projected)
+            # Reshape back
+            text_token = text_token_projected.view(batch_size, seq_len_text, -1)
+        else:
+            # Use internal prompt encoder (original behavior)
+            if self.prompt_encoder is None:
+                raise ValueError("prompt_encoder is None but external_prompt_embeddings not provided")
+            text_token = self.prompt_encoder(
+                text_input_ids=text_input_ids,
+                text_attention_mask=text_attention_mask,
+                categories=categories
+            )  # (batch_size, 1, hidden_size)
         
         # Combine protein embeddings and text token
         combined_embeddings = torch.cat([text_token, protein_embeddings], dim=1)  # (batch_size, seq_len+1, hidden_size)
         
         # Add positional encoding to combined embeddings
-        combined_embeddings_with_pos = self.prompt_encoder.get_positional_encoding(
-            embeddings=combined_embeddings,
-            point_positions=point_positions,
-            prompt_token_idx=0  # Text token is at index 0
-        )  # (batch_size, seq_len+1, hidden_size)
+        if self.use_external_embeddings:
+            # For external embeddings, use simple positional encoding
+            seq_len_with_prompt = combined_embeddings.shape[1]
+            # Use pre-computed position encoding (sequences are guaranteed to be within max length)
+            pos_encodings = self.position_encoding[:seq_len_with_prompt].unsqueeze(0).expand(
+                combined_embeddings.shape[0], -1, -1
+            )
+            combined_embeddings_with_pos = combined_embeddings + pos_encodings
+        else:
+            # Use original positional encoding logic with point prompts
+            combined_embeddings_with_pos = self.prompt_encoder.get_positional_encoding(
+                embeddings=combined_embeddings,
+                point_positions=point_positions,
+                prompt_token_idx=0  # Text token is at index 0
+            )  # (batch_size, seq_len+1, hidden_size)
         
         # Split back to text token and protein embeddings
         text_token_with_pos = combined_embeddings_with_pos[:, 0:1, :]  # (batch_size, 1, hidden_size)
@@ -155,10 +220,15 @@ class ProteinSAM(nn.Module):
         mask_predictions = torch.argmax(mask_logits, dim=-1)  # (batch_size, seq_len)
         mask_probs = F.softmax(mask_logits, dim=-1)  # (batch_size, seq_len, 2)
         
+        # Convert mask predictions to start/end positions for backward compatibility
+        start_predictions, end_predictions = self._mask_to_positions(mask_predictions)
+        
         outputs = {
             "mask_logits": mask_logits,
             "mask_predictions": mask_predictions,
-            "mask_probs": mask_probs
+            "mask_probs": mask_probs,
+            "start_predictions": start_predictions,
+            "end_predictions": end_predictions
         }
         
         # Compute loss if labels are provided
@@ -166,21 +236,41 @@ class ProteinSAM(nn.Module):
             # Create binary mask from start/end labels
             mask_labels = self._create_mask_labels(start_labels, end_labels, seq_len, batch_size)
             
-            # Compute IoU loss and CrossEntropy loss
-            iou_loss = self._compute_iou_loss(mask_logits, mask_labels, protein_attention_mask)
+            # Compute Dice loss and CrossEntropy loss
+            dice_loss = self._compute_dice_loss(mask_logits, mask_labels, protein_attention_mask)
             ce_loss = self._compute_ce_loss(mask_logits, mask_labels, protein_attention_mask)
             
             # Combine losses
-            total_loss = iou_loss + ce_loss
+            total_loss = 0.5 * dice_loss + ce_loss  # Balanced weighting for stability
             
             outputs.update({
                 "loss": total_loss,
-                "iou_loss": iou_loss,
+                "dice_loss": dice_loss,
                 "ce_loss": ce_loss,
                 "mask_labels": mask_labels
             })
         
         return outputs
+    
+    def _mask_to_positions(self, mask_predictions: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        
+        batch_size, seq_len = mask_predictions.shape
+        start_positions = torch.zeros(batch_size, dtype=torch.long, device=mask_predictions.device)
+        end_positions = torch.zeros(batch_size, dtype=torch.long, device=mask_predictions.device)
+        
+        for b in range(batch_size):
+            mask = mask_predictions[b]
+            # Find first and last positive positions
+            positive_indices = torch.where(mask == 1)[0]
+            if len(positive_indices) > 0:
+                start_positions[b] = positive_indices[0]
+                end_positions[b] = positive_indices[-1]
+            else:
+                # No positive predictions - default to position 0
+                start_positions[b] = 0
+                end_positions[b] = 0
+        
+        return start_positions, end_positions
     
     def _create_mask_labels(
         self, 
@@ -200,34 +290,33 @@ class ProteinSAM(nn.Module):
         
         return mask_labels
     
-    def _compute_iou_loss(
+    def _compute_dice_loss(
         self, 
         mask_logits: torch.Tensor, 
         mask_labels: torch.Tensor, 
         attention_mask: torch.Tensor
     ) -> torch.Tensor:
-        """Compute IoU loss for binary segmentation."""
-        # Get foreground probabilities
-        mask_probs = F.softmax(mask_logits, dim=-1)  # (batch_size, seq_len, 2)
-        pred_fg = mask_probs[:, :, 1]  # (batch_size, seq_len)
-        true_fg = mask_labels.float()  # (batch_size, seq_len)
+        """Compute Dice loss for binary segmentation."""
+        # Use sigmoid on foreground logits for better gradient flow
+        pred_probs = torch.sigmoid(mask_logits[:, :, 1])  # (batch_size, seq_len)
+        true_mask = mask_labels.float()  # (batch_size, seq_len)
         
         # Apply attention mask
         if attention_mask is not None:
-            pred_fg = pred_fg * attention_mask.float()
-            true_fg = true_fg * attention_mask.float()
+            pred_probs = pred_probs * attention_mask.float()
+            true_mask = true_mask * attention_mask.float()
         
-        # Compute IoU
-        intersection = (pred_fg * true_fg).sum(dim=1)  # (batch_size,)
-        union = pred_fg.sum(dim=1) + true_fg.sum(dim=1) - intersection  # (batch_size,)
+        # Compute Dice coefficient
+        intersection = (pred_probs * true_mask).sum(dim=1)  # (batch_size,)
+        union = pred_probs.sum(dim=1) + true_mask.sum(dim=1)  # (batch_size,)
         
-        # IoU with smoothing
-        iou = (intersection + self.smooth) / (union + self.smooth)  # (batch_size,)
+        # Dice with smoothing (more stable than IoU)
+        dice = (2.0 * intersection + self.smooth) / (union + self.smooth)  # (batch_size,)
         
-        # IoU loss (1 - mean IoU)
-        iou_loss = 1.0 - iou.mean()
+        # Dice loss (1 - mean Dice)
+        dice_loss = 1.0 - dice.mean()
         
-        return iou_loss
+        return dice_loss
     
     def _compute_ce_loss(
         self, 
@@ -244,7 +333,7 @@ class ProteinSAM(nn.Module):
         
         # Apply attention mask
         if attention_mask is not None:
-            attention_mask_flat = attention_mask.view(-1)  # (batch_size * seq_len,)
+            attention_mask_flat = attention_mask.reshape(-1)  # (batch_size * seq_len,)
             valid_indices = attention_mask_flat == 1
             mask_logits_flat = mask_logits_flat[valid_indices]
             mask_labels_flat = mask_labels_flat[valid_indices]
@@ -257,10 +346,11 @@ class ProteinSAM(nn.Module):
         self,
         protein_input_ids: torch.Tensor,
         protein_attention_mask: torch.Tensor,
-        text_input_ids: torch.Tensor,
-        text_attention_mask: torch.Tensor,
+        text_input_ids: Optional[torch.Tensor] = None,
+        text_attention_mask: Optional[torch.Tensor] = None,
         point_positions: Optional[torch.Tensor] = None,
-        return_probabilities: bool = False
+        return_probabilities: bool = False,
+        external_prompt_embeddings: Optional[torch.Tensor] = None
     ) -> Dict[str, torch.Tensor]:
         """
         Inference method for mask prediction.
@@ -283,11 +373,14 @@ class ProteinSAM(nn.Module):
                 protein_attention_mask=protein_attention_mask,
                 text_input_ids=text_input_ids,
                 text_attention_mask=text_attention_mask,
-                point_positions=point_positions
+                point_positions=point_positions,
+                external_prompt_embeddings=external_prompt_embeddings
             )
             
             predictions = {
-                "mask_predictions": outputs["mask_predictions"]
+                "mask_predictions": outputs["mask_predictions"],
+                "start_predictions": outputs["start_predictions"],
+                "end_predictions": outputs["end_predictions"]
             }
             
             if return_probabilities:
@@ -329,16 +422,19 @@ class ProteinSAM(nn.Module):
         protein_input_ids = protein_tokenized['input_ids'].to(self.device)
         protein_attention_mask = protein_tokenized['attention_mask'].to(self.device)
         
-        # Tokenize categories
-        text_tokenized = self.prompt_encoder.tokenizer(
-            categories,
-            padding=True,
-            truncation=True,
-            max_length=128,
-            return_tensors="pt"
-        )
-        text_input_ids = text_tokenized['input_ids'].to(self.device)
-        text_attention_mask = text_tokenized['attention_mask'].to(self.device)
+        # Tokenize categories (only if not using external embeddings)
+        text_input_ids = None
+        text_attention_mask = None
+        if not self.use_external_embeddings:
+            text_tokenized = self.prompt_encoder.tokenizer(
+                categories,
+                padding=True,
+                truncation=True,
+                max_length=128,
+                return_tensors="pt"
+            )
+            text_input_ids = text_tokenized['input_ids'].to(self.device)
+            text_attention_mask = text_tokenized['attention_mask'].to(self.device)
         
         # Convert point positions to tensor if provided
         point_tensor = None
@@ -390,7 +486,7 @@ class ProteinSAM(nn.Module):
                 'decoder_intermediate_size': self.position_decoder.feed_forward_layers[0][0].out_features,
                 'max_sequence_length': self.max_sequence_length,
                 'protein_hidden_size': self.protein_encoder.hidden_size,
-                'output_llama_layer': self.prompt_encoder.output_llama_layer
+                'output_llama_layer': self.output_llama_layer if self.use_external_embeddings else self.prompt_encoder.output_llama_layer
             }
         }, save_path)
         
@@ -401,13 +497,23 @@ class ProteinSAM(nn.Module):
         checkpoint = torch.load(load_path, map_location=self.device)
         model_state_dict = checkpoint['model_state_dict']
         
-        # Load only trainable parameters
+        # Load parameters, handling prompt_encoder weights for external embeddings mode
         current_state_dict = self.state_dict()
-        for name, param in model_state_dict.items():
-            if name in current_state_dict:
-                current_state_dict[name].copy_(param)
+        loaded_keys = []
         
-        print(f"Model loaded from {load_path}")
+        for name, param in model_state_dict.items():
+            # Handle prompt_encoder weights when using external embeddings
+            if self.use_external_embeddings and name.startswith('prompt_encoder.'):
+                # Map prompt_encoder weights to direct components
+                component_name = name.replace('prompt_encoder.', '')
+                if component_name in current_state_dict:
+                    current_state_dict[component_name].copy_(param)
+                    loaded_keys.append(component_name)
+            elif name in current_state_dict:
+                current_state_dict[name].copy_(param)
+                loaded_keys.append(name)
+        
+        print(f"Model loaded from {load_path}, loaded {len(loaded_keys)} parameters")
     
     def get_trainable_parameters(self):
         """Get count of trainable parameters."""

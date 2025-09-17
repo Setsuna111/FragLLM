@@ -6,7 +6,6 @@ using the HuggingFace Trainer framework with LoRA fine-tuning support.
 
 Based on train_trainer_refer.py but adapted for Esm2LlamaInstructForCausalLM.
 """
-
 import sys
 sys.path.append("..")
 sys.path.append(".")
@@ -18,8 +17,11 @@ import pathlib
 import transformers
 import random
 import torch
-import os
+import torch.nn as nn
+import torch.distributed as dist
+
 import json
+import numpy as np
 
 from torch.utils.data import random_split, DataLoader
 from functools import partial
@@ -70,7 +72,6 @@ class FragModelArguments:
     ce_loss_weight: Optional[float] = field(default=1.0, metadata={"help": "ce loss weight"})
     position_loss_weight: Optional[float] = field(default=0.1, metadata={"help": "position loss weight"})
 
-
     def __repr__(self):
         # 获取 dataclass 默认字段
         fields = {field.name: getattr(self, field.name) for field in self.__dataclass_fields__.values()}
@@ -80,7 +81,6 @@ class FragModelArguments:
         all_fields = {**fields, **dynamic_fields}
         return f"ModelArguments({all_fields})"
 
-    
 
 @dataclass
 class FragDataArguments:
@@ -180,14 +180,6 @@ def get_frag_adapter_state_maybe_zero_3(named_params, keys_to_match):
     to_return = {k: maybe_zero_3(v, ignore_status=True, name=k).cpu() for k, v in to_return.items()}
     return to_return
 
-def get_protein_sam_state_maybe_zero_3(named_params):
-    """Extract ProteinSAM parameters excluding the ESM encoder"""
-    to_return = {}
-    for k, t in named_params:
-        if "protein_sam" in k and "protein_sam.esm_model" not in k:
-            to_return[k] = maybe_zero_3(t, ignore_status=True, name=k).cpu()
-    return to_return
-
 # Borrowed from peft.utils.get_peft_model_state_dict
 def get_peft_state_maybe_zero_3(named_params, bias):
     if bias == "none":
@@ -220,31 +212,15 @@ def get_peft_state_non_lora_maybe_zero_3(named_params, require_grad_only=True):
     to_return = {k: maybe_zero_3(v, ignore_status=True).cpu() for k, v in to_return.items()}
     return to_return
 
-def get_peft_state_non_lora_with_protein_sam_maybe_zero_3(named_params, require_grad_only=True):
-    """Extract non-LoRA parameters including ProteinSAM trainable parameters (excluding ESM encoder)"""
-    to_return = {}
-    for k, t in named_params:
-        # Include non-LoRA parameters
-        if "lora_" not in k:
-            # For ProteinSAM, exclude ESM encoder but include other trainable parts
-            if "protein_sam" in k:
-                if "protein_sam.esm_model" not in k:
-                    if not require_grad_only or t.requires_grad:
-                        to_return[k] = maybe_zero_3(t, ignore_status=True).cpu()
-            else:
-                if not require_grad_only or t.requires_grad:
-                    to_return[k] = maybe_zero_3(t, ignore_status=True).cpu()
-    return to_return
-
 
 class FragTrainer(Trainer):
     """Custom Trainer for Esm2LlamaInstructForCausalLM with fragment support."""
+    
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.ce_loss_history = []
         self.position_loss_history = []
 
-    
     def log(self, logs: Dict[str, float]) -> None:
         """
         Log `logs` on the various objects watching training.
@@ -316,7 +292,6 @@ class FragTrainer(Trainer):
             self.position_loss_history.append(position_loss.detach().item())
 
         return (loss, outputs) if return_outputs else loss
-    
 
     def create_optimizer(self):
         """Create optimizer with different learning rates for different components."""
@@ -335,11 +310,11 @@ class FragTrainer(Trainer):
         decay_params = [n for n in decay_params if "bias" not in n]
         
         for k, v in opt_model.named_parameters():
-            # Explicitly exclude frozen ProteinSAM parameters (only ESM encoder should be frozen)
-            if "protein_sam.esm_model" in k:
+            # Explicitly exclude frozen ProteinSAM parameters
+            if "protein_sam" in k:
                 continue
             if v.requires_grad:
-                if any(component in k for component in ["esm_encoder", "adapter", "fragment_adapter", "protein_sam"]):
+                if any(component in k for component in ["esm_encoder", "adapter", "fragment_adapter"]):
                     if k in decay_params:
                         protein_params.append(v)
                     else:
@@ -376,14 +351,12 @@ class FragTrainer(Trainer):
                 torch.save(weight_to_save, os.path.join(output_dir, f'fragment_adapter.bin'))
         else:
             super(FragTrainer, self)._save_checkpoint(model, trial, metrics)
-
+            
     def _save(self, output_dir: Optional[str] = None, state_dict=None):
         if getattr(self.args, 'tune_frag_adapter', False):
             pass
         else:
             super(FragTrainer, self)._save(output_dir, state_dict)
-
-
 
 def safe_save_model_for_hf_trainer(trainer: transformers.Trainer,
                                    output_dir: str):
@@ -422,16 +395,31 @@ def safe_save_model_for_hf_trainer(trainer: transformers.Trainer,
         trainer._save(output_dir, state_dict=cpu_state_dict)  # noqa
 
 
-
-
 def train(attn_implementation=None):
-    global local_rank
-    """Main training function."""
+
+    """***************************** Environment Setting *****************************"""
+    # load args
     parser = transformers.HfArgumentParser(
         (FragModelArguments, FragDataArguments, FragTrainingArguments)
     )
     model_args, data_args, training_args = parser.parse_args_into_dataclasses()
+    global local_rank
     local_rank = training_args.local_rank
+
+    # Set random seeds
+    # training_args.seed = training_args.seed + training_args.local_rank  # 0905 debug
+    transformers.trainer_utils.set_seed(training_args.seed)
+
+    # save args
+    args_dict = {
+        "model_args": vars(model_args),
+        "data_args": vars(data_args),
+        "training_args": vars(training_args)
+    }
+    save_path = f"{training_args.output_dir}/training_config.json"
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    with open(save_path, "w", encoding="utf-8") as f:
+        json.dump(args_dict, f, indent=4, ensure_ascii=False, default=custom_serializer)
 
     # Determine torch dtype
     if training_args.bf16:
@@ -441,18 +429,43 @@ def train(attn_implementation=None):
     else:
         torch_dtype = torch.float32
 
+    """***************************** Dataset Setting *****************************"""
+    # Create datasets and data collator
+    # Load tokenizers
+    esm_tokenizer = AutoTokenizer.from_pretrained(model_args.esm_path)
+    llama_tokenizer = AutoTokenizer.from_pretrained(
+        model_args.llama_path,
+        pad_token='<|reserved_special_token_0|>'
+    )
 
-    # Load base models
+    # add special tokens
+    llama_tokenizer.add_tokens([
+        data_args.position_placeholder,
+        data_args.phrase_start_placeholder,
+        data_args.phrase_end_placeholder
+    ], special_tokens=True)
+
+    data_args.sequence_tokenizer = esm_tokenizer
+    data_args.llm_tokenizer = llama_tokenizer
+    data_args.perceiver_latent_size = model_args.perceiver_latent_size
+    data_module = make_multitask_dataset(data_args)
+    print(f"Training dataset size: {len(data_module['train_dataset'])}")
+    if data_args.dataset_valid_config is not None:
+        print(f"Evaluation dataset size: {len(data_module['eval_dataset'])}")
+
+    """***************************** Model Setting *****************************"""
+    # Load base llama models
     model = ProteinLlamaForCausalLM.from_pretrained(
         model_args.llama_path,
         torch_dtype=torch_dtype,
         cache_dir=training_args.cache_dir,
         attn_implementation=attn_implementation,
     )
+
     model.config.use_cache = False
     if model_args.freeze_backbone:
         model.model.requires_grad_(False)
-
+    
     if training_args.gradient_checkpointing:
         if hasattr(model, "enable_input_require_grads"):
             model.enable_input_require_grads()
@@ -461,7 +474,12 @@ def train(attn_implementation=None):
                 output.requires_grad_(True)
             model.get_input_embeddings().register_forward_hook(make_inputs_require_grad)
 
+    # resize token embeddings for added special tokens
+    model.resize_token_embeddings(len(llama_tokenizer))
+    model.lm_head.weight.requires_grad_(True)
+    model.get_model().embed_tokens.weight.requires_grad_(True)
 
+    # lora setting
     if training_args.lora_enable:
         print("Initializing LoRA adapter")
         target_modules = training_args.lora_target_modules.split(",")
@@ -481,37 +499,8 @@ def train(attn_implementation=None):
                 model.to(torch.float16)
         model = get_peft_model(model, lora_config)
         model.print_trainable_parameters()
-    args_dict = {
-        "model_args": vars(model_args),
-        "data_args": vars(data_args),
-        "training_args": vars(training_args)
-    }
-    save_path = f"{training_args.output_dir}/training_config.json"
-    # 创建路径（如果不存在）
-    os.makedirs(os.path.dirname(save_path), exist_ok=True)
-    # 保存为 JSON 文件
-    with open(save_path, "w", encoding="utf-8") as f:
-        json.dump(args_dict, f, indent=4, ensure_ascii=False, default=custom_serializer)
     
-    # Set random seeds
-    # transformers.trainer_utils.set_seed(training_args.seed)
-    
-    # Create datasets and data collator
-    #Load tokenizers
-    esm_tokenizer = AutoTokenizer.from_pretrained(model_args.esm_path)
-    llama_tokenizer = AutoTokenizer.from_pretrained(
-        model_args.llama_path,
-        pad_token='<|reserved_special_token_0|>'
-    )
-    # add special tokens
-    llama_tokenizer.add_tokens([
-        data_args.position_placeholder,
-        data_args.phrase_start_placeholder,
-        data_args.phrase_end_placeholder
-    ], special_tokens=True)
-    model.resize_token_embeddings(len(llama_tokenizer))
-    model.lm_head.weight.requires_grad_(True)
-    model.get_model().embed_tokens.weight.requires_grad_(True)
+    # load esm model and adapters
     if model_args.esm_path is not None:
         # max_sequence_length
         model.config.max_sequence_length = data_args.max_sequence_length
@@ -533,7 +522,7 @@ def train(attn_implementation=None):
         rank0_print("model.config.position_placeholder_id: ", model.config.position_placeholder_id)
         rank0_print("model.config.phrase_start_placeholder_id: ", model.config.phrase_start_placeholder_id)
         rank0_print("model.config.phrase_end_placeholder_id: ", model.config.phrase_end_placeholder_id)
-        
+
         esm_encoder = model.get_model().get_esm_encoder()
         esm_encoder.to(dtype=torch_dtype, device=training_args.device)
         model.config.tune_fragment_adapter = training_args.tune_fragment_adapter
@@ -554,17 +543,43 @@ def train(attn_implementation=None):
         if training_args.freeze_fragment_adapter:
             for p in model.get_model().fragment_adapter.parameters():
                 p.requires_grad_(False)
+
+    # Check for existing checkpoints and load non-LoRA weights if resuming
+    checkpoints = list(pathlib.Path(training_args.output_dir).glob("checkpoint-*"))
+    resume_from_checkpoint = len(checkpoints) > 0
+    
+    if resume_from_checkpoint:
+        latest_checkpoint = max(checkpoints, key=lambda x: int(x.name.split('-')[1]))
+        print(f"Found existing checkpoints. Latest checkpoint: {latest_checkpoint}")
         
-    # rank0_print("Model:")
-    # rank0_print(model)
+        # 如果是LoRA训练，需要在创建trainer前加载非LoRA权重
+        if training_args.lora_enable:
+            non_lora_path = os.path.join(latest_checkpoint, 'non_lora_trainables.bin')
+            if os.path.exists(non_lora_path):
+                print(f"Loading non-LoRA trainable weights from {non_lora_path}")
+                non_lora_state_dict = torch.load(non_lora_path, map_location='cpu')
+
+                # print("before:", model.base_model.model.model.adapter.fc1.weight)  # debug: check if weights are loaded
+
+                load_result = model.load_state_dict(non_lora_state_dict, strict=False)
+                if load_result.unexpected_keys:
+                    print(f"Warning: Unexpected keys when loading non-LoRA weights: {load_result.unexpected_keys}")
+                if load_result.missing_keys:
+                    print(f"Warning: Missing keys when loading non-LoRA weights: {load_result.missing_keys}")
+                print(f"Successfully loaded {len(non_lora_state_dict)} non-LoRA parameters")
+
+                # print("after:",model.base_model.model.model.adapter.fc1.weight)  # debug: check if weights are loaded
+
+            else:
+                print(f"Warning: non_lora_trainables.bin not found in {latest_checkpoint}")
+                print("Continuing with LoRA weights only...")
+
+    # Print model information
     rank0_print("ModelTrainable:")
     rank0_print([n for n, p in model.named_parameters() if p.requires_grad])
-    rank0_print(model.device)
-    data_args.sequence_tokenizer = esm_tokenizer
-    data_args.llm_tokenizer = llama_tokenizer
-    data_module = make_multitask_dataset(data_args)
-    
-    # Create trainer
+    rank0_print("device:", model.device)
+
+    """***************************** Trainer Setting *****************************"""
     trainer = FragTrainer(
         model=model,
         tokenizer=llama_tokenizer,
@@ -572,21 +587,20 @@ def train(attn_implementation=None):
         **data_module,
     )
 
-    # rank0_print("Model:")
-    # rank0_print(model)
-    rank0_print("device:", model.device)
     rank0_print("training_args.device:", training_args.device)
     rank0_print(f"Training dataset size: {len(data_module['train_dataset'])}")
     if data_args.dataset_valid_config is not None:
         rank0_print(f"Evaluation dataset size: {len(data_module['eval_dataset'])}")
-    
+
     # Start training
-    if list(pathlib.Path(training_args.output_dir).glob("checkpoint-*")):
+    if resume_from_checkpoint:
         rank0_print("Resuming training from checkpoint...")
         trainer.train(resume_from_checkpoint=True)
     else:
         rank0_print("Starting training from scratch...")
         trainer.train()
+
+    """***************************** Final Save *****************************"""
     trainer.save_state()
     model.config.use_cache = True
     model.config.gradient_checkpointing = True
@@ -594,7 +608,7 @@ def train(attn_implementation=None):
         state_dict = get_peft_state_maybe_zero_3(
             model.named_parameters(), training_args.lora_bias
         )
-        non_lora_state_dict = get_peft_state_non_lora_with_protein_sam_maybe_zero_3(
+        non_lora_state_dict = get_peft_state_non_lora_maybe_zero_3(
             model.named_parameters()
         )
         if training_args.local_rank == 0 or training_args.local_rank == -1:

@@ -3,7 +3,7 @@ Loads model and runs inference on specified test datasets with llama cache suppo
 """
 
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "4"
+os.environ["CUDA_VISIBLE_DEVICES"] = "5"
 import torch
 from protein_sam import ProteinSAM
 from dataset import get_datasets_and_collator
@@ -137,7 +137,11 @@ def run_dataset_inference(
             
             # Create ground truth masks from start/end labels
             batch_size, seq_len = batch["protein_input_ids"].shape
-            true_masks = torch.zeros(batch_size, seq_len, dtype=torch.long)
+
+            adjusted_seq_len = seq_len - 2  # Adjust for BOS/EOS tokens
+            adjusted_mask = batch["protein_attention_mask"][:, 1:-1]  # Adjust attention mask
+
+            true_masks = torch.zeros(batch_size, adjusted_seq_len, dtype=torch.long)
             
             for b in range(batch_size):
                 start = batch["start_labels"][b].item()
@@ -149,7 +153,7 @@ def run_dataset_inference(
             metrics = calculate_metrics(
                 outputs["mask_predictions"].cpu(), 
                 true_masks, 
-                batch["protein_attention_mask"].cpu()
+                adjusted_mask.cpu()
             )
             all_metrics.append(metrics)
             
@@ -161,17 +165,12 @@ def run_dataset_inference(
                 pred_starts.append(start)
                 pred_ends.append(end)
             
-            # Store results
+            # Store results - only predicted and actual start/end positions
             batch_results = {
-                "mask_predictions": outputs["mask_predictions"].cpu(),
-                "mask_probabilities": outputs["mask_probs"].cpu(),
                 "pred_start_positions": pred_starts,
                 "pred_end_positions": pred_ends,
                 "true_start_positions": batch["start_labels"].cpu().tolist(),
-                "true_end_positions": batch["end_labels"].cpu().tolist(),
-                "true_masks": true_masks,
-                "categories": batch["categories"],
-                "metrics": metrics
+                "true_end_positions": batch["end_labels"].cpu().tolist()
             }
             all_results.append(batch_results)
     

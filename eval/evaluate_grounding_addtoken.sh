@@ -8,9 +8,9 @@
 # ======================================
 
 # Model and data paths
-MODEL_PATH="/home/lfj/projects_dir/FragLLM/checkpoints/grounding_lora_0916test_merge_addtoken"
+MODEL_PATH="/home/lfj/projects_dir/FragLLM/checkpoints/grounding_lora_only_act_iousam_0917_merge_addtoken/"
 ROOT_DIR="./data"
-RESULTS_DIR="./eval_results/single_grounding/grounding_lora_0916test_merge_addtoken"
+RESULTS_DIR="./eval_results/single_grounding/grounding_lora_iousam_0917test_2"
 
 # Evaluation parameters
 SPLIT="test"
@@ -20,8 +20,8 @@ TEMPERATURE=0.0
 # GPU configuration
 USE_SINGLE_GPU=false  # Set to true for single GPU mode, false for multi-GPU
 SINGLE_GPU_ID=0       # GPU ID to use in single GPU mode
-export CUDA_VISIBLE_DEVICES=0,1,2,3  # Specify visible GPUs for multi-GPU mode
-NUM_GPUS=4           # Number of GPUs for distributed training
+export CUDA_VISIBLE_DEVICES=0,1  # Specify visible GPUs for multi-GPU mode
+NUM_GPUS=2           # Number of GPUs for distributed training
 MASTER_PORT=24989     # Master port for distributed training
 
 # Dataset selection - modify as needed
@@ -36,6 +36,7 @@ MASTER_PORT=24989     # Master port for distributed training
 # DATASETS="Pro2Text,ActRefClass,MotifRefDesc"          # Mixed function and reference datasets
 # DATASETS="MotifRefDesc,ActRefClass"                      # Default: two reference datasets
 DATASETS="ActGroundSingle"
+# DATASETS="ActGroundSingle,BindIGroundSingle,MotifGroundSingle"
 
 
 # ======================================

@@ -43,7 +43,7 @@ REFERENCE_DATASETS = {
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Unified evaluation script for function and reference datasets')
-    parser.add_argument("--model_path", default="/home/lfj/projects_dir/FragLLM/checkpoints/test_load_stage1_only_motifdesc_lora_fast_save/checkpoint-600_merge/", help="path to the trained model")
+    parser.add_argument("--model_path", default="/home/lfj/projects_dir/FragLLM/checkpoints/test_load_stage1_lora_0915_multi_scale_final_data_wo_domain_merge/", help="path to the trained model")
     parser.add_argument("--temperature", default=0.0, type=float, help="generation temperature")
     parser.add_argument("--root_dir", default='./data', help="root folder of the data")
     parser.add_argument("--datasets", default="MotifRefDesc", help="comma-separated list of datasets to evaluate")

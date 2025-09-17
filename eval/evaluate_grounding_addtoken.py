@@ -12,6 +12,7 @@ from tqdm import tqdm
 import torch
 import os
 import argparse
+import re
 from eval.ddp import *
 
 GROUNDING_DATASETS = {
@@ -27,18 +28,74 @@ GROUNDING_DATASETS = {
     'MotifGroundGroup': MotifGroundingGroup,
 }
 
+def list_nested_elements_recursive(data):
+    """
+    使用递归方法提取多层嵌套列表中的每个元素。
+    """
+    data_list = []
+    # 遍历列表中的每一个元素
+    for element in data:
+        # 如果元素是列表，则递归调用函数并将结果累加
+        if isinstance(element, list):
+            data_list.extend(list_nested_elements_recursive(element))
+        # 如果元素不是列表，说明它是一个最里层的元素
+        else:
+            data_list.append(element)
+    return data_list
+
+def replace_matches_sequentially(
+    input_string,
+    pattern,
+    replacements,
+):
+    """
+    Finds all matches for a regex pattern in a string and replaces each 
+    match sequentially with an item from the replacements list.
+
+    Args:
+        input_string: The text to perform replacements on.
+        pattern: A regex pattern (string or compiled) to find matches.
+        replacements: A list of items to use as replacements. Each item
+                      will be formatted into a string like 'start,end'.
+
+    Returns:
+        The modified string with all replacements made.
+
+    Raises:
+        ValueError: If the number of matches is greater than the number of 
+                    available items in the replacements list.
+    """
+    # Create an iterator from the list to pull values one by one
+    replacements_iter = iter(replacements)
+
+    def replacer(match):
+        """Inner function called by re.sub() for each match."""
+        try:
+            # Get the next tuple from our iterator
+            next_val = next(replacements_iter)
+            # Format it into the desired string and return it
+            if next_val[0] > next_val[1]:
+                return f"{next_val[1]},{next_val[0]}"
+            return f"{next_val[0]},{next_val[1]}"
+        except StopIteration:
+            # This error occurs if we run out of replacement items.
+            raise ValueError("Not enough replacement items for the number of matches found.")
+
+    # Use re.sub with the replacer function and return the result
+    return re.sub(pattern, replacer, input_string)
+
 def parse_args():
     parser = argparse.ArgumentParser(description='Unified evaluation script for function and reference datasets')
-    parser.add_argument("--model_path", default="/home/lfj/projects_dir/FragLLM/checkpoints/grounding_lora_0916test_merge_addtoken/", help="path to the trained model")
+    parser.add_argument("--model_path", default="/home/lfj/projects_dir/FragLLM/checkpoints/grounding_lora_save_test_merge_addtoken/", help="path to the trained model")
     parser.add_argument("--temperature", default=0.0, type=float, help="generation temperature")
     parser.add_argument("--root_dir", default='./data', help="root folder of the data")
     parser.add_argument("--datasets", default="ActGroundSingle", help="comma-separated list of datasets to evaluate")
     parser.add_argument("--split", default="test", help="data split to use (train, test, eval)")
     parser.add_argument("--batch_per_device", type=int, default=2, help="batch size for each device")
     parser.add_argument("--save_results_dir", default="./eval_results", help="directory to save results")
-    parser.add_argument("--single_gpu", action="store_true", help="use single GPU mode instead of distributed")
-    # parser.add_argument("--single_gpu", default=True, help="use single GPU mode instead of distributed")
-    parser.add_argument("--gpu_id", type=int, default=7, help="GPU ID to use in single GPU mode")
+    # parser.add_argument("--single_gpu", action="store_true", help="use single GPU mode instead of distributed")
+    parser.add_argument("--single_gpu", default=True, help="use single GPU mode instead of distributed")
+    parser.add_argument("--gpu_id", type=int, default=0, help="GPU ID to use in single GPU mode")
     
     # Distributed training arguments
     parser.add_argument('--world_size', default=1, type=int, help='number of distributed processes')
@@ -89,47 +146,22 @@ def evaluate_dataset(dataset_name, model, tokenizer, data_collator,
     generated = []
     references = []
     dataset_idx_list = []
-    ignore_tokens = [128009, 128002]
+    gt_position_grds = []
+    pred_position_grds = []
+    pattern = re.compile(r'<frag_position>')
     print(f"Starting evaluation on {dataset_name}...")
     for inputs in tqdm(dataloader, desc=f"Evaluating {dataset_name}"):
-        # Extract reference answers and add fragment position information
-        batch_references = tokenizer.batch_decode(inputs['answer_input_ids'], skip_special_tokens=True)
-        
-        # Process reference texts to add position information from position_grds
-        for i, ref_text in enumerate(batch_references):
-            if "position_grds" in inputs and inputs["position_grds"] is not None and i < len(inputs["position_grds"]):
-                position_grd = inputs["position_grds"][i]
-                if position_grd is not None and len(position_grd) > 0:
-                    # Process each group of positions in position_grd
-                    modified_text = ref_text
-                    
-                    # Replace position placeholders with actual positions
-                    # The text should contain patterns like "name:." where we need to insert positions
-                    for group_positions in position_grd:
-                        if group_positions and len(group_positions) > 0:
-                            # Format position pairs as "start-end"
-                            position_pairs = []
-                            for start, end in group_positions:
-                                position_pairs.append(f"{start}-{end}")
-                            position_str = ", ".join(position_pairs)
-                            
-                            # Find and replace position placeholder patterns
-                            # Look for ":." or ":," patterns and insert position before the punctuation
-                            if ":." in modified_text:
-                                modified_text = modified_text.replace(":.", f":{position_str}.", 1)
-                            elif ":," in modified_text:
-                                modified_text = modified_text.replace(":,", f":{position_str},", 1)
-                            elif modified_text.endswith(":"):
-                                modified_text = modified_text + position_str + "."
-                    
-                    references.append(modified_text)
-                else:
-                    references.append(ref_text)
-            else:
-                references.append(ref_text)
-        
-        # Remove the original line that was adding references
-        # references += tokenizer.batch_decode(inputs['answer_input_ids'], skip_special_tokens=True)
+        # Extract reference answers
+        answers_gt = tokenizer.batch_decode(inputs['answer_input_ids'])
+        answers_gt_replace = []
+        for i, answer_gt in enumerate(answers_gt):
+            position_grds = list_nested_elements_recursive(inputs['position_grds'][i])
+            position_grds = list(zip(position_grds[::2], position_grds[1::2]))
+            gt_position_grds.append(position_grds)
+            # Extract answer_gt中的(<frag_start>,<frag_end>)或者(<frag_start>, <frag_end>)元素
+            answer_gt_replace = replace_matches_sequentially(answer_gt, pattern, position_grds)
+            answers_gt_replace.append(answer_gt_replace.replace("<|reserved_special_token_0|>", "").replace("<|eot_id|>", ""))
+        references += answers_gt_replace
         
         # Move inputs to device
         inputs = {k: v.to(device=device, non_blocking=True) if hasattr(v, 'to') else v 
@@ -138,11 +170,8 @@ def evaluate_dataset(dataset_name, model, tokenizer, data_collator,
         dataset_idx_list += inputs.get('dataset_idxs', [None]*inputs['input_ids'].size(0))
 
         # Generate responses
-        # generated += tokenizer.batch_decode(inputs['answer_input_ids'], skip_special_tokens=True)  # 0904 debug，代替实际生成过程
-
         with torch.no_grad():
-            # Generate text with grounding inference enabled
-            generation_result = model.generate(
+            tok_ids, position_grds_pred = model.generate(
                 inputs=None,
                 input_ids=inputs["input_ids"],
                 attention_mask=inputs["attention_mask"],
@@ -150,7 +179,7 @@ def evaluate_dataset(dataset_name, model, tokenizer, data_collator,
                 protein_attention_mask=inputs["protein_attention_mask"],
                 protein_inputs_embeds=None,
                 position_refs=inputs["position_refs"],
-                grounding_inference=True,  # Enable grounding inference
+                grounding_inference=True,
                 num_beams=1,
                 early_stopping=False,
                 no_repeat_ngram_size=None,
@@ -162,44 +191,22 @@ def evaluate_dataset(dataset_name, model, tokenizer, data_collator,
                 max_new_tokens=512,
                 use_cache=True
             )
-            
-            # Extract text and position predictions
-            if isinstance(generation_result, tuple) and len(generation_result) == 2:
-                # grounding_inference=True now returns (generate_output_ids, position_grds_batch)
-                tok_ids, position_grds_batch = generation_result
-                
-                # Decode the generated text
-                batch_generated_text = tokenizer.batch_decode(tok_ids, skip_special_tokens=True)
-                
-                # Process position predictions and integrate with text
-                for i, text in enumerate(batch_generated_text):
-                    if position_grds_batch is not None and i < len(position_grds_batch):
-                        positions = position_grds_batch[i]
-                        if positions is not None:
-                            # Extract start and end positions
-                            start_positions = positions.get("start_positions", [])
-                            end_positions = positions.get("end_positions", [])
-                            
-                            if len(start_positions) > 0 and len(end_positions) > 0:
-                                # Format position pairs as "start-end"
-                                position_pairs = []
-                                for start, end in zip(start_positions, end_positions):
-                                    position_pairs.append(f"{start.item()}-{end.item()}")
-                                position_str = ", ".join(position_pairs)
-                                
-                                # Replace the placeholder with actual position
-                                if ":" in text and text.endswith(":"):
-                                    # Format: "The position of X is Y:." -> "The position of X is Y:123-456."
-                                    text = text[:-1] + position_str + "."
-                                elif "is located at" in text and text.endswith(":."):
-                                    # Format: "X is located at Y:." -> "X is located at Y:123-456."
-                                    text = text[:-2] + ":" + position_str + "."
-                    generated.append(text)
+
+        answers_pred = tokenizer.batch_decode(tok_ids)
+        answers_pred_replace = []
+        for i, answer_pred in enumerate(answers_pred):
+            if position_grds_pred is not None and i < len(position_grds_pred):
+                # Extract start and end positions from the prediction
+                start_positions = position_grds_pred[i]['start_positions'].tolist()
+                end_positions = position_grds_pred[i]['end_positions'].tolist() 
+                position_grd_pred = list(zip(start_positions, end_positions))
             else:
-                # Fallback: treat as regular generation output
-                tok_ids = generation_result
-                generated += tokenizer.batch_decode(tok_ids, skip_special_tokens=True)
-        # import pdb; pdb.set_trace()
+                position_grd_pred = []
+            
+            pred_position_grds.append(position_grd_pred)
+            answer_pred_replace = replace_matches_sequentially(answer_pred, pattern, position_grd_pred)
+            answers_pred_replace.append(answer_pred_replace.replace("<|reserved_special_token_0|>", "").replace("<|eot_id|>", ""))
+        generated += answers_pred_replace
     
     # Handle multi-GPU result collection
     if args.single_gpu:
@@ -207,7 +214,9 @@ def evaluate_dataset(dataset_name, model, tokenizer, data_collator,
         data = {
             'generated': generated,
             'reference': references,
-            'dataset_idx': dataset_idx_list
+            'dataset_idx': dataset_idx_list,
+            'gt_positions': gt_position_grds,
+            'pred_positions': pred_position_grds
         }
         df = pd.DataFrame(data)
         df.to_csv(save_results_path, index=False)
@@ -220,7 +229,9 @@ def evaluate_dataset(dataset_name, model, tokenizer, data_collator,
             data = {
                 'generated': generated,
                 'reference': references,
-                'dataset_idx': dataset_idx_list
+                'dataset_idx': dataset_idx_list,
+                'gt_positions': gt_position_grds,
+                'pred_positions': pred_position_grds
             }
             df = pd.DataFrame(data)
             df.to_csv(partial_save_path, index=False)
@@ -231,7 +242,7 @@ def evaluate_dataset(dataset_name, model, tokenizer, data_collator,
             # Only rank 0 merges all results
             if torch.distributed.get_rank() == 0:
                 print(f"Rank 0: Merging results from all GPUs...")
-                all_data = {'generated': [], 'reference': [], 'dataset_idx': []}
+                all_data = {'generated': [], 'reference': [], 'dataset_idx': [], 'gt_positions': [], 'pred_positions': []}
                 
                 # Collect results from all ranks
                 for rank in range(args.world_size):
@@ -241,6 +252,8 @@ def evaluate_dataset(dataset_name, model, tokenizer, data_collator,
                         all_data['generated'].extend(rank_df['generated'].tolist())
                         all_data['reference'].extend(rank_df['reference'].tolist())
                         all_data['dataset_idx'].extend(rank_df['dataset_idx'].tolist())
+                        all_data['gt_positions'].extend(rank_df['gt_positions'].tolist())
+                        all_data['pred_positions'].extend(rank_df['pred_positions'].tolist())
                         # Clean up partial file
                         os.remove(rank_file)
 
@@ -263,7 +276,9 @@ def evaluate_dataset(dataset_name, model, tokenizer, data_collator,
             data = {
                 'generated': generated,
                 'reference': references,
-                'dataset_idx': dataset_idx_list
+                'dataset_idx': dataset_idx_list,
+                'gt_positions': gt_position_grds,
+                'pred_positions': pred_position_grds
             }
             df = pd.DataFrame(data)
             df.to_csv(save_results_path, index=False)
@@ -308,24 +323,6 @@ def main():
     model = ProteinLlamaForCausalLM.from_pretrained(args.model_path)
     model.config.pad_token_id = tokenizer.pad_token_id
     sequence_tokenizer = AutoTokenizer.from_pretrained(model.config.esm_path)
-    
-    # Initialize proteinSAM and other modules if needed
-    # 这些args都不是proteinSAM用到的，也不会被里面的任何模块加载，只是传进去防止报错，从而偷懒利用initialize_modules函数初始化
-    class MockModelArgs:
-        def __init__(self):
-            self.esm_path = model.config.esm_path
-            self.perceiver_latent_size = getattr(model.config, 'perceiver_latent_size', 1)
-            self.num_perceiver_heads = getattr(model.config, 'num_perceiver_heads', 8)
-            self.num_perceiver_layers = getattr(model.config, 'num_perceiver_layers', 2)
-            self.intermediate_dim = getattr(model.config, 'intermediate_dim', 2048)
-            self.dropout_rate = getattr(model.config, 'dropout_rate', 0.3)
-            self.freeze_backbone = getattr(model.config, 'freeze_backbone', False)
-            self.load_adapter_checkpoint_dir = None
-            self.load_fragment_checkpoint_dir = None
-        
-    mock_model_args = MockModelArgs()
-    model.get_model().initialize_modules(model_args=mock_model_args, fsdp=None)
-    print("ProteinSAM and modules initialized successfully")
     
     # Set position placeholder ID for grounding inference
     model.config.position_placeholder_id = 128256  # Use the addtoken position placeholder ID

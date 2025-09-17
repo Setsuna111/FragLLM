@@ -83,10 +83,11 @@ class ProteinSAM(nn.Module):
             self.layer_norm = nn.LayerNorm(self.protein_hidden_size)
             self.dropout = nn.Dropout(dropout_rate)
             
-            # Create sinusoidal positional encoding
+            # Create sinusoidal positional encoding with buffer for BOS/EOS tokens
             import math
-            pe = torch.zeros(max_sequence_length, self.protein_hidden_size)
-            position = torch.arange(0, max_sequence_length).unsqueeze(1).float()
+            actual_max_length = max_sequence_length + 1  # +2 for BOS/EOS tokens from ESM, +1 for text token
+            pe = torch.zeros(actual_max_length, self.protein_hidden_size)
+            position = torch.arange(0, actual_max_length).unsqueeze(1).float()
             div_term = torch.exp(torch.arange(0, self.protein_hidden_size, 2).float() *
                                -(math.log(10000.0) / self.protein_hidden_size))
             pe[:, 0::2] = torch.sin(position * div_term)
@@ -152,20 +153,24 @@ class ProteinSAM(nn.Module):
             attention_mask=protein_attention_mask
         )  # (batch_size, seq_len, hidden_size)
         
+        protein_embeddings = protein_embeddings[:, 1:-1, :]  # Remove BOS/EOS tokens
+        protein_attention_mask = protein_attention_mask[:, 1:-1]  # Adjust attention mask
+        seq_len = seq_len - 2  # Adjusted sequence length after removing BOS/EOS
+        
         # Get text token - either from external embeddings or internal encoder
         if self.use_external_embeddings and external_prompt_embeddings is not None:
             # Use external prompt embeddings, apply text_projection for dimension matching
             text_token_raw = external_prompt_embeddings  # (batch_size, 1, llama_hidden_size)
             # Reshape for projection if needed
-            batch_size, seq_len, hidden_size = text_token_raw.shape
-            text_token_flat = text_token_raw.view(batch_size * seq_len, hidden_size)
+            batch_size_text, seq_len_text, hidden_size = text_token_raw.shape
+            text_token_flat = text_token_raw.view(batch_size_text * seq_len_text, hidden_size)
             # Apply text projection 
             text_token_projected = self.text_projection(text_token_flat)
             # Apply layer norm and dropout like in original prompt encoder
             text_token_projected = self.layer_norm(text_token_projected)
             text_token_projected = self.dropout(text_token_projected)
             # Reshape back
-            text_token = text_token_projected.view(batch_size, seq_len, -1)
+            text_token = text_token_projected.view(batch_size_text, seq_len_text, -1)
         else:
             # Use internal prompt encoder (original behavior)
             if self.prompt_encoder is None:
@@ -183,23 +188,10 @@ class ProteinSAM(nn.Module):
         if self.use_external_embeddings:
             # For external embeddings, use simple positional encoding
             seq_len_with_prompt = combined_embeddings.shape[1]
-            # Handle case where sequence is longer than position_encoding buffer
-            if seq_len_with_prompt > self.position_encoding.shape[0]:
-                # Extend position encoding dynamically
-                import math
-                device = self.position_encoding.device
-                dtype = self.position_encoding.dtype
-                pe = torch.zeros(seq_len_with_prompt, self.protein_hidden_size, device=device, dtype=dtype)
-                position = torch.arange(0, seq_len_with_prompt, device=device).unsqueeze(1).float()
-                div_term = torch.exp(torch.arange(0, self.protein_hidden_size, 2, device=device).float() *
-                                   -(math.log(10000.0) / self.protein_hidden_size))
-                pe[:, 0::2] = torch.sin(position * div_term)
-                pe[:, 1::2] = torch.cos(position * div_term)
-                pos_encodings = pe.unsqueeze(0).expand(combined_embeddings.shape[0], -1, -1)
-            else:
-                pos_encodings = self.position_encoding[:seq_len_with_prompt].unsqueeze(0).expand(
-                    combined_embeddings.shape[0], -1, -1
-                )
+            # Use pre-computed position encoding (sequences are guaranteed to be within max length)
+            pos_encodings = self.position_encoding[:seq_len_with_prompt].unsqueeze(0).expand(
+                combined_embeddings.shape[0], -1, -1
+            )
             combined_embeddings_with_pos = combined_embeddings + pos_encodings
         else:
             # Use original positional encoding logic with point prompts

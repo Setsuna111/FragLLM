@@ -3,8 +3,9 @@
 ## USAGE
 
 export PYTHONPATH="./:$PYTHONPATH"
-Results_Path=./eval_results/single_grounding/fragment_training_only_stage2_bw_stage1_lora32_epoch1_0907_grounding_single_merge/DomGroundSingle_results.csv
+# Results_Path=./eval_results/single_grounding/fragment_training_only_stage2_bw_stage1_lora32_epoch1_0907_grounding_single_merge/DomGroundSingle_results.csv
+Path="/home/lfj/projects_dir/FragLLM/eval_results/single_grounding/grounding_lora_iousam_0917test_2/ActGroundSingle_results.csv"
 IOU_Threshold=0.5
 
 
-python eval_local/metric_single_grounding.py --results_path $Results_Path --iou_threshold $IOU_Threshold
+python eval/metric_single_grounding.py --results_path $Path --iou_threshold $IOU_Threshold

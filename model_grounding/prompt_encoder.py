@@ -56,8 +56,9 @@ class PromptEncoder(nn.Module):
         )
         
         # Sinusoidal position encoding for point prompts and sequence positions
-        self.max_sequence_length = max_sequence_length
-        self.register_buffer('position_encoding', self._create_sinusoidal_encoding(max_sequence_length, protein_hidden_size))
+        # Add buffer for BOS/EOS tokens from ESM tokenizer
+        self.max_sequence_length = max_sequence_length + 1  # +2 for BOS/EOS tokens, +1 for text token
+        self.register_buffer('position_encoding', self._create_sinusoidal_encoding(self.max_sequence_length, protein_hidden_size))
         
         # Layer norm and dropout
         self.layer_norm = nn.LayerNorm(protein_hidden_size)

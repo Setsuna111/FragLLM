@@ -25,7 +25,7 @@ deepspeed --include "localhost:0,1,2,3" --master_port $MASTER_PORT  scripts/trai
     --sample_rate_train "1,1,1" \
     --max_sequence_length 1021 \
     --filter_sequence False \
-    --output_dir "/home/lfj/projects_dir/FragLLM/checkpoints/grounding_lora_fix_shift_0916test" \
+    --output_dir "/home/lfj/projects_dir/FragLLM/checkpoints/grounding_lora_fix_shift_0916test_new" \
     --num_train_epochs 10 \
     --per_device_train_batch_size 1 \
     --per_device_eval_batch_size 4 \

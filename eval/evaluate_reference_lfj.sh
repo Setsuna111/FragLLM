@@ -8,9 +8,9 @@
 # ======================================
 
 # Model and data paths
-MODEL_PATH="/home/lfj/projects_dir/FragLLM/checkpoints/test_load_stage1_only_motifdesc_lora_0911_multi_scale/checkpoint-40000_merge/"
+MODEL_PATH="/home/lfj/projects_dir/FragLLM/checkpoints/test_load_stage1_lora_0915_multi_scale_final_data_wo_domain_merge/"
 ROOT_DIR="./data"
-RESULTS_DIR="./results/results_reference_all_desc_0911_multi_scale"  # Directory to save evaluation results
+RESULTS_DIR="./results/results_reference_0917"  # Directory to save evaluation results
 
 # Evaluation parameters
 SPLIT="test"
@@ -32,11 +32,12 @@ MASTER_PORT=24989     # Master port for distributed training
 
 # Examples of dataset combinations:
 # DATASETS="Pro2Text"                                    # Single function dataset
-DATASETS="ActRefClass,ActRefDesc"                      # Multiple reference datasets  
+# DATASETS="ActRefClass,ActRefDesc"                      # Multiple reference datasets  
 # DATASETS="Pro2Text,ActRefClass,MotifRefDesc"          # Mixed function and reference datasets
 # DATASETS="MotifRefDesc,ActRefClass"                      # Default: two small reference datasets
 # DATASETS="MotifRefDesc,ActRefDesc,BindIRefDesc,DomRefDesc,EvoRefDesc"  # All five reference desc datasets
-
+DATASETS="ActRefClass,BindIRefClass,EvoRefClass,MotifRefClass"  # All five reference desc datasets
+# DataSETS="MotifRefDesc,ActRefDesc,BindIRefDesc,EvoRefDesc"
 
 # ======================================
 # Script Execution - Do not modify below unless needed

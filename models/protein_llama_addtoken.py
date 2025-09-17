@@ -114,36 +114,46 @@ class ProteinLlamaForCausalLM(LlamaForCausalLM, ProteinMetaForCausalLM):
 
         if position_masks.any():
             position_grds_pred = []
-            # Use ProteinSAM for position prediction. Extract special tokens as categories (functional descriptions)
+            # Use ProteinSAM for position prediction. Handle multiple position tokens per sample
             for i, position_mask in enumerate(position_masks):
                 if position_mask.any():
                     assert position_grds[i] is not None
-                    # Use single special token (keep only one as requested)
-                    postoken_hidden_states = hidden_states[i][position_mask][:1]  # Take only first token
+                    # Get all position tokens for this sample
+                    postoken_hidden_states_all = hidden_states[i][position_mask]  # (num_tokens, hidden_size)
+                    num_tokens = postoken_hidden_states_all.shape[0]
                     
-                    # Extract ground truth labels for training
-                    start_labels = None
-                    end_labels = None
-                    if position_grds[i] is not None and len(position_grds[i]) > 0:
-                        # Extract first position pair as labels
-                        first_position = position_grds[i][0][0]  # [group][position][start,end]
-                        start_labels = torch.tensor([first_position[0]], device=protein_input_ids.device)
-                        end_labels = torch.tensor([first_position[1]], device=protein_input_ids.device)
+                    # Process each position token separately
+                    sample_outputs = []
+                    for token_idx in range(num_tokens):
+                        # Get this specific token's hidden state
+                        postoken_hidden_states = postoken_hidden_states_all[token_idx:token_idx+1]  # (1, hidden_size)
+                        
+                        # Extract corresponding ground truth labels for training
+                        start_labels = None
+                        end_labels = None
+                        if (position_grds[i] is not None and len(position_grds[i]) > 0 and 
+                            len(position_grds[i][0]) > token_idx):
+                            # Extract position pair for this specific token
+                            position_pair = position_grds[i][0][token_idx]  # [group][position_idx][start,end]
+                            start_labels = torch.tensor([position_pair[0]], device=protein_input_ids.device)
+                            end_labels = torch.tensor([position_pair[1] - 1], device=protein_input_ids.device)
+                        
+                        # Use special token embedding directly as external prompt
+                        special_token_embedding = postoken_hidden_states.unsqueeze(1)  # (1, 1, hidden_size)
+                        
+                        # Call ProteinSAM with external embedding
+                        sam_outputs = self.get_model().protein_sam(
+                            protein_input_ids=protein_input_ids[i:i+1],
+                            protein_attention_mask=protein_attention_mask[i:i+1],
+                            external_prompt_embeddings=special_token_embedding,  # Use special token embedding
+                            start_labels=start_labels,  # Ground truth for training
+                            end_labels=end_labels       # Ground truth for training
+                        )
+                        
+                        sample_outputs.append(sam_outputs)
                     
-                    # Use special token embedding directly as external prompt
-                    special_token_embedding = postoken_hidden_states.unsqueeze(1)  # (1, 1, hidden_size)
-                    
-                    # Call ProteinSAM with external embedding
-                    sam_outputs = self.get_model().protein_sam(
-                        protein_input_ids=protein_input_ids[i:i+1],
-                        protein_attention_mask=protein_attention_mask[i:i+1],
-                        external_prompt_embeddings=special_token_embedding,  # Use special token embedding
-                        start_labels=start_labels,  # Ground truth for training
-                        end_labels=end_labels       # Ground truth for training
-                    )
-                    
-                    # Store ProteinSAM outputs for loss calculation
-                    position_grds_pred.append(sam_outputs)
+                    # Store all outputs for this sample
+                    position_grds_pred.append(sample_outputs)
                 else:
                     assert position_grds[i] is None
                     position_grds_pred.append(None)
@@ -169,10 +179,19 @@ class ProteinLlamaForCausalLM(LlamaForCausalLM, ProteinMetaForCausalLM):
             position_loss = position_grds_pred["loss"]
         elif isinstance(position_grds_pred, list) and len(position_grds_pred) > 0:
             # For batch processing, aggregate losses from ProteinSAM outputs
+            # position_grds_pred is now [sample][token][outputs]
             batch_losses = []
-            for pred in position_grds_pred:
-                if pred is not None and hasattr(pred, 'get') and "loss" in pred:
-                    batch_losses.append(pred["loss"])
+            for sample_preds in position_grds_pred:
+                if sample_preds is not None:
+                    if isinstance(sample_preds, list):
+                        # Multiple tokens per sample
+                        for token_pred in sample_preds:
+                            if token_pred is not None and hasattr(token_pred, 'get') and "loss" in token_pred:
+                                batch_losses.append(token_pred["loss"])
+                    else:
+                        # Single prediction (backward compatibility)
+                        if hasattr(sample_preds, 'get') and "loss" in sample_preds:
+                            batch_losses.append(sample_preds["loss"])
             if batch_losses:
                 position_loss = torch.stack(batch_losses).mean()
         
@@ -313,23 +332,34 @@ class ProteinLlamaForCausalLM(LlamaForCausalLM, ProteinMetaForCausalLM):
                         generated_hidden_states = output_hidden_states[i]
                         
                         if position_mask.any():
-                            postoken_hidden_states = generated_hidden_states[position_mask][:1]  # Take only first token
+                            # Get all position tokens for this sample
+                            postoken_hidden_states_all = generated_hidden_states[position_mask]  # (num_tokens, hidden_size)
+                            num_tokens = postoken_hidden_states_all.shape[0]
                             
-                            # Use special token embedding directly as external prompt
-                            special_token_embedding = postoken_hidden_states.unsqueeze(1)  # (1, 1, hidden_size)
+                            # Process each position token separately
+                            sample_predictions = []
+                            for token_idx in range(num_tokens):
+                                # Get this specific token's hidden state
+                                postoken_hidden_states = postoken_hidden_states_all[token_idx:token_idx+1]  # (1, hidden_size)
+                                
+                                # Use special token embedding directly as external prompt
+                                special_token_embedding = postoken_hidden_states.unsqueeze(1)  # (1, 1, hidden_size)
+                                
+                                # Call ProteinSAM for grounding inference
+                                sam_outputs = self.get_model().protein_sam(
+                                    protein_input_ids=protein_input_ids[i:i+1],
+                                    protein_attention_mask=protein_attention_mask[i:i+1],
+                                    external_prompt_embeddings=special_token_embedding  # Use special token embedding
+                                )
+                                
+                                # Store predictions for this token
+                                sample_predictions.append({
+                                    "start_predictions": sam_outputs["start_predictions"],
+                                    "end_predictions": sam_outputs["end_predictions"] + 1  # Convert back to inclusive end
+                                })
                             
-                            # Call ProteinSAM for grounding inference
-                            sam_outputs = self.get_model().protein_sam(
-                                protein_input_ids=protein_input_ids[i:i+1],
-                                protein_attention_mask=protein_attention_mask[i:i+1],
-                                external_prompt_embeddings=special_token_embedding  # Use special token embedding
-                            )
-                            
-                            # Store both start and end predictions
-                            position_grds_pred.append({
-                                "start_predictions": sam_outputs["start_predictions"],
-                                "end_predictions": sam_outputs["end_predictions"]
-                            })
+                            # Store all predictions for this sample
+                            position_grds_pred.append(sample_predictions)
             else:
                 position_grds_pred = []
             
@@ -338,8 +368,13 @@ class ProteinLlamaForCausalLM(LlamaForCausalLM, ProteinMetaForCausalLM):
                 position_grds_batch = None
             else:
                 # Process both start and end predictions (already argmax'ed by ProteinSAM)
-                start_positions = [pred["start_predictions"] for pred in position_grds_pred]  # List of (1,) tensors
-                end_positions = [pred["end_predictions"] for pred in position_grds_pred]    # List of (1,) tensors
+                # Flatten the nested structure: position_grds_pred is now [sample][token][predictions]
+                start_positions = []
+                end_positions = []
+                for sample_preds in position_grds_pred:
+                    for token_pred in sample_preds:
+                        start_positions.append(token_pred["start_predictions"])
+                        end_positions.append(token_pred["end_predictions"])
                 
                 # Concatenate all position predictions
                 start_positions_cat = torch.cat(start_positions, dim=0)  # [all_positions]

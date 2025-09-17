@@ -7,7 +7,8 @@ import sys
 import os
 
 # Add model_grounding to path for ProteinSAM
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'model_grounding'))
+# sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'model_grounding'))
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'model_grounding_iou'))
 from protein_sam import ProteinSAM
 
 class FeedForwardNetwork(nn.Module):
@@ -189,8 +190,19 @@ class ProteinMetaModel:
             self.esm_encoder = EsmModel.from_pretrained(config.esm_path, add_pooling_layer=False)
             self.adapter = ModalityAdapter(config.protein_emb_dim, config.intermediate_dim, config.hidden_size, config.dropout_rate)
             self.fragment_adapter = FragmentAdapter(config.protein_emb_dim, config.hidden_size, config.perceiver_latent_size, config.num_perceiver_heads, config.num_perceiver_layers, config.dropout_rate)
-            # ProteinSAM will be initialized in initialize_modules
-            self.protein_sam = None
+            self.protein_sam = ProteinSAM(
+                esm_model_path="/home/lfj/projects_dir/pretrained_model/esm2_t30_150M_UR50D/",
+                llama_model_path=None,  # No LLaMA needed
+                decoder_num_heads=8,
+                decoder_num_layers=4,  # 0917 test
+                decoder_intermediate_size=512,
+                max_sequence_length=1021,
+                dropout_rate=0.1,
+                device='cpu',  # Will be moved to correct device later
+                use_category_cache=False,  # Not using category cache
+                category_embeddings_path=None,  # No category embeddings
+                use_external_embeddings=True  # Use external embeddings from LLM
+            )
     def get_esm_encoder(self):
         esm_encoder = getattr(self, "esm_encoder", None)
         if type(esm_encoder) is list:
@@ -228,7 +240,7 @@ class ProteinMetaModel:
                 esm_model_path="/home/lfj/projects_dir/pretrained_model/esm2_t30_150M_UR50D/",
                 llama_model_path=None,  # No LLaMA needed
                 decoder_num_heads=8,
-                decoder_num_layers=2,
+                decoder_num_layers=4,  # 0917 test
                 decoder_intermediate_size=512,
                 max_sequence_length=1021,
                 dropout_rate=0.1,
@@ -239,16 +251,21 @@ class ProteinMetaModel:
             )
             
             # Load pretrained ProteinSAM weights
-            proteinSAM_checkpoint_path = os.path.join(os.path.dirname(__file__), '..', 'model_grounding', 'checkpoints_grounding', 'best_model.pt')
+            # proteinSAM_checkpoint_path = os.path.join(os.path.dirname(__file__), '..', 'model_grounding', 'checkpoints_grounding', 'best_model.pt')
+            proteinSAM_checkpoint_path = os.path.join(os.path.dirname(__file__), '..', 'model_grounding_iou', 'checkpoints_grounding_0916', 'best_model.pt')
             proteinSAM_checkpoint_path = os.path.abspath(proteinSAM_checkpoint_path)
             
             assert os.path.exists(proteinSAM_checkpoint_path), f"ProteinSAM checkpoint not found at {proteinSAM_checkpoint_path}"
             print(f"Loading ProteinSAM pretrained weights from {proteinSAM_checkpoint_path}")
             self.protein_sam.load_model(proteinSAM_checkpoint_path)
 
-            # Freeze all ProteinSAM parameters (no training, no storage)
-            for param in self.protein_sam.parameters():
-                param.requires_grad = False
+            # Only freeze the ESM encoder in ProteinSAM, allow other parts to be trainable
+            if hasattr(self.protein_sam, 'esm_model') and self.protein_sam.esm_model is not None:
+                for param in self.protein_sam.esm_model.parameters():
+                    param.requires_grad = False
+            
+            # Keep other ProteinSAM components (decoder layers, embeddings) trainable
+            # This allows training and saving of the ProteinSAM parameters except ESM encoder
 
         if model_args.load_adapter_checkpoint_dir is not None:
             adapter_weights = torch.load(model_args.load_adapter_checkpoint_dir, map_location="cpu")

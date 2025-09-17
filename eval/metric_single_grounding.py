@@ -16,7 +16,7 @@ def extract_position_single(response):
     positions = []
     # pattern = re.compile(r'<reserved_special_token_3>(.*?)<reserved_special_token_4>')  # <reserved_special_token_3>(0,107)<reserved_special_token_4>
     # pattern = re.compile(r'\((.*?)\)')  # <reserved_special_token_3>(0,107)<reserved_special_token_4>
-    pattern = re.compile(r'\(\s*(\d+)\s*,\s*(\d+)\s*\)')
+    pattern = re.compile(r'\s*(\d+)\s*,\s*(\d+)\s*')
     matches = pattern.findall(response)
 
     for match in matches:

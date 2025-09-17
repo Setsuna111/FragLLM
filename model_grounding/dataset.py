@@ -122,14 +122,14 @@ class ProteinSAMDataset(data.Dataset):
         Returns:
             Point position or None (for null prompt)
         """
-        if training:
-            # With some probability, return null position
-            if random.random() < self.null_position_prob:
-                return None
+        # if training:
+        #     # With some probability, return null position
+        #     if random.random() < self.null_position_prob:
+        #         return None
             
             # With some probability, return random position
-            if random.random() < self.random_position_prob:
-                return random.randint(0, sequence_length - 1)
+            # if random.random() < self.random_position_prob:
+            #     return random.randint(0, sequence_length - 1)
         # else:
         #     return None  # test: no position prompt when eval
 
@@ -154,6 +154,7 @@ class ProteinSAMDataset(data.Dataset):
     ) -> Tuple[str, int, int]:
         """
         Process sequence by truncating if necessary while preserving fragment.
+        Uses randomized truncation for better data augmentation.
         
         Args:
             sequence: Full protein sequence
@@ -171,29 +172,37 @@ class ProteinSAMDataset(data.Dataset):
         
         if fragment_length > self.max_sequence_length:
             # Fragment itself is too long, take a portion of it
-            sequence = sequence[start_pos:start_pos + self.max_sequence_length]
-            return sequence, 0, self.max_sequence_length - 1
+            truncated_sequence = sequence[start_pos:start_pos + self.max_sequence_length]
+            return truncated_sequence, 0, self.max_sequence_length - 1
         
-        # Try to center the fragment in the truncated sequence
-        center_pos = (start_pos + end_pos) // 2
-        half_max_len = self.max_sequence_length // 2
+        # Randomized truncation strategy that preserves the fragment
+        # Calculate valid range for truncation start position
         
-        # Calculate truncation start
-        truncate_start = max(0, center_pos - half_max_len)
-        truncate_end = min(len(sequence), truncate_start + self.max_sequence_length)
+        # Truncation window start cannot be later than fragment start, 
+        # otherwise it would cut off the beginning of the fragment
+        max_start = start_pos
         
-        # Adjust if we hit the sequence end
-        if truncate_end == len(sequence):
-            truncate_start = max(0, truncate_end - self.max_sequence_length)
+        # Truncation window start cannot be too early, 
+        # otherwise the window end would cut off the end of the fragment
+        min_start = max(0, end_pos - self.max_sequence_length + 1)
+        
+        assert min_start <= max_start, "Invalid truncation range"
+        
+        # Randomly choose truncation start within valid range
+        truncate_start = random.randint(min_start, max_start)
+        
+        # Ensure truncation doesn't exceed sequence bounds
+        truncate_start = max(0, min(truncate_start, len(sequence) - self.max_sequence_length))
+        truncate_end = truncate_start + self.max_sequence_length
         
         # Truncate sequence
         truncated_sequence = sequence[truncate_start:truncate_end]
         
-        # Adjust positions
+        # Adjust positions relative to new sequence start
         new_start_pos = start_pos - truncate_start
         new_end_pos = end_pos - truncate_start
         
-        # Ensure positions are valid
+        # Ensure positions are valid (should always be true with correct logic)
         new_start_pos = max(0, new_start_pos)
         new_end_pos = min(len(truncated_sequence) - 1, new_end_pos)
         
@@ -288,7 +297,7 @@ class ProteinSAMCollator:
             sequences,
             padding=True,
             truncation=True,
-            max_length=self.max_protein_length,
+            max_length=self.max_protein_length+2,
             return_tensors="pt"
         )
         
@@ -308,8 +317,9 @@ class ProteinSAMCollator:
             text_attention_mask = text_tokenized["attention_mask"]
         
         # Convert positions to tensors
-        start_labels = torch.tensor(start_positions, dtype=torch.long)
-        end_labels = torch.tensor(end_positions, dtype=torch.long)
+        # Positions remain as original since BOS/EOS tokens are removed in the model
+        start_labels = torch.tensor([pos for pos in start_positions], dtype=torch.long)
+        end_labels = torch.tensor([pos for pos in end_positions], dtype=torch.long)
         
         # Handle point positions (some might be None)
         point_tensor = torch.zeros(len(batch), dtype=torch.long)
@@ -317,7 +327,8 @@ class ProteinSAMCollator:
         
         for i, point_pos in enumerate(point_positions):
             if point_pos is not None:
-                point_tensor[i] = max(0, point_pos)  # Ensure non-negative
+                # Keep original point position since BOS/EOS tokens are removed in model
+                point_tensor[i] = max(0, point_pos)
                 point_mask[i] = True
         
         batch_dict = {
@@ -391,7 +402,7 @@ def get_datasets_and_collator(
     collator = ProteinSAMCollator(
         esm_tokenizer=esm_tokenizer,
         llama_tokenizer=llama_tokenizer,
-        max_protein_length=max_sequence_length + 2,  # +2 for BOS/EOS
+        max_protein_length=max_sequence_length,
         max_text_length=max_text_length,
         use_category_cache=use_category_cache
     )

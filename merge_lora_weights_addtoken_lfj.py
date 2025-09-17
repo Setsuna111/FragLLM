@@ -150,31 +150,9 @@ def merge_lora_addtoken(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    # parser.add_argument("--model-path", type=str, default="/home/djy/projects/Documents/FragLLM_git/checkpoints/fragment_training_only_stage2_lora32_epoch1_0831")
-    # parser.add_argument("--model-base", type=str, default="/home/djy/projects/Data/HF_models/Meta-Llama-3.1-8B-Instruct")
-    # parser.add_argument("--save-model-path", type=str, default="/home/djy/projects/Documents/FragLLM_git/checkpoints/fragment_training_only_stage2_lora32_epoch1_0831_merge_initesm")
-
-    # 0902 test
-    # model_path = "/home/lfj/projects_dir/FragLLM/checkpoints/test_load_stage1_only_motifdesc_lora"
-    # model_path = "/home/lfj/projects_dir/FragLLM/checkpoints/test_load_stage1_both_motifdesc_motifcls_lora"
-    # model_path = "/home/lfj/projects_dir/FragLLM/checkpoints/test_from_scratch_only_motifdesc_lora"
-
-    # 0903 test
-    # model_path = "/home/lfj/projects_dir/FragLLM/checkpoints/test_load_stage1_only_motifdesc_lora_fast_save/"
-    # model_path = "/home/lfj/projects_dir/FragLLM/checkpoints/test_load_stage1_only_motifdesc_lora_fast_save/checkpoint-700/"
-    # model_path = "/home/lfj/projects_dir/FragLLM/checkpoints/test_load_stage1_only_motifdesc_lora_fast_save/checkpoint-600/"
-
-    # 0904 test
-    # model_path = "/home/lfj/projects_dir/FragLLM/checkpoints/test_load_stage1_only_motifdesc_lora_fast_save_after_data_fix/checkpoint-1100/"
-
-    # 0905 test
-    # model_path = "/home/lfj/projects_dir/FragLLM/checkpoints/test_load_stage1_only_motifdesc_lora_fast_save_test_all_desc/checkpoint-2000/"
-    # model_path = "/home/lfj/projects_dir/FragLLM/checkpoints/test_load_stage1_only_motifdesc_lora_fast_save_test_all_desc/checkpoint-1000/"
-    # model_path = "/home/lfj/projects_dir/FragLLM/checkpoints/test_load_stage1_only_motifdesc_lora_fast_save_test_all_desc/checkpoint-3000/"
-    # model_path = "/home/lfj/projects_dir/FragLLM/checkpoints/test_load_stage1_only_motifdesc_lora_fast_save_test_all_desc/checkpoint-8000/"
-
-    # 0916 test
-    model_path = "/home/lfj/projects_dir/FragLLM/checkpoints/grounding_lora_0916test/"
+    
+    # 0917 test
+    model_path = "/home/lfj/projects_dir/FragLLM/checkpoints/grounding_lora_save_test/"
 
     model_path = model_path.rstrip('/')
     merged_path = model_path + "_merge_addtoken"
