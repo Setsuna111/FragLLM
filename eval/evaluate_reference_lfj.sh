@@ -20,8 +20,8 @@ TEMPERATURE=0.0
 # GPU configuration
 USE_SINGLE_GPU=false  # Set to true for single GPU mode, false for multi-GPU
 SINGLE_GPU_ID=0       # GPU ID to use in single GPU mode
-export CUDA_VISIBLE_DEVICES=6,7  # Specify visible GPUs for multi-GPU mode
-NUM_GPUS=2           # Number of GPUs for distributed training
+export CUDA_VISIBLE_DEVICES=4  # Specify visible GPUs for multi-GPU mode
+NUM_GPUS=1           # Number of GPUs for distributed training
 MASTER_PORT=24989     # Master port for distributed training
 
 # Dataset selection - modify as needed
@@ -67,7 +67,7 @@ if [ "$USE_SINGLE_GPU" = true ]; then
     echo "========================================="
     
     # Single GPU execution
-    python eval/evaluate_reference.py \
+    python eval/evaluate_reference_lfj.py \
         --model_path "$MODEL_PATH" \
         --root_dir "$ROOT_DIR" \
         --datasets "$DATASETS" \
@@ -87,7 +87,7 @@ else
         --nnodes=1 \
         --nproc_per_node="$NUM_GPUS" \
         --master_port="$MASTER_PORT" \
-        eval/evaluate_reference.py \
+        eval/evaluate_reference_lfj.py \
         --model_path "$MODEL_PATH" \
         --root_dir "$ROOT_DIR" \
         --datasets "$DATASETS" \
