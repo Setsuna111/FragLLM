@@ -205,11 +205,47 @@ Grounding_Answer_Single = [
 
 # New detailed grounding templates
 Frag_Ground_Single_Detailed = [
-    "The protein sequence is {full_sequence}, with a total length of {N}, and the amino acid sequence index starts from 0. Please identify how many {class_name} regions exist in this sequence and provide their positions from left to right."
+    "The protein sequence is {full_sequence}, with a total length of {N}, and the amino acid sequence index starts from 0. Please identify how many {class_name} regions exist in this sequence and provide their positions from left to right.",
+
+    "Given the protein sequence {full_sequence}, with a total length of {N}, and the amino acid sequence index starts from 0. Can you determine the number of {class_name} sites present in the sequence and list their coordinates sequentially?",
+
+    "The protein sequence is {full_sequence}, with a total length of {N}, and the amino acid sequence index starts from 0. Could you analyze and identify all {class_name} regions in this sequence and provide their positional ranges in order?",
+
+    "Based on the protein sequence {full_sequence}, with a total length of {N}, and the amino acid sequence index starts from 0. Please enumerate the {class_name} fragments found in the sequence and specify their start-end positions.",
+
+    "The protein sequence is {full_sequence}, with a total length of {N}, and the amino acid sequence index starts from 0. How many instances of {class_name} are present, and what are their respective locations in the sequence?",
+
+    "Given the sequence {full_sequence}, with a total length of {N}, and the amino acid sequence index starts from 0. Please locate all {class_name} elements and provide their positional boundaries from left to right.",
+
+    "The protein sequence is {full_sequence}, with a total length of {N}, and the amino acid sequence index starts from 0. Identify the count and coordinates of all {class_name} occurrences in this sequence.",
+
+    "From the protein sequence {full_sequence}, with a total length of {N}, and the amino acid sequence index starts from 0. Can you find and list all {class_name} segments along with their position ranges?",
+
+    "The protein sequence is {full_sequence}, with a total length of {N}, and the amino acid sequence index starts from 0. Please determine how many {class_name} domains exist and specify their exact locations in sequential order.",
+
+    "Given the sequence {full_sequence}, with a total length of {N}, and the amino acid sequence index starts from 0. Locate all instances of {class_name} and provide their start and end coordinates systematically."
 ]
 
 Grounding_Answer_Single_Detailed = [
-    "The fragment for the {class_name} lies within {region_count} regions: {detailed_positions}."
+    "The fragment for the {class_name} lies within {region_count} regions: {detailed_positions}.",
+
+    "I found {region_count} {class_name} regions in the sequence: {detailed_positions}.",
+
+    "There are {region_count} instances of {class_name} located at: {detailed_positions}.",
+
+    "The sequence contains {region_count} {class_name} sites positioned at: {detailed_positions}.",
+
+    "Analysis reveals {region_count} {class_name} elements at the following locations: {detailed_positions}.",
+
+    "I identified {region_count} {class_name} regions with coordinates: {detailed_positions}.",
+
+    "The {class_name} appears in {region_count} locations: {detailed_positions}.",
+
+    "There are {region_count} {class_name} fragments distributed at: {detailed_positions}.",
+
+    "The sequence has {region_count} {class_name} domains located at: {detailed_positions}.",
+
+    "I detected {region_count} instances of {class_name} at positions: {detailed_positions}."
 ]
 
 # Grounding Full Protein
@@ -260,6 +296,51 @@ Grounding_Answer_Group = [
 
     "The results include the following {task_name} entities and their coordinates in the sequence: {contents}."
     ]
+
+# Detailed Group Grounding Templates
+Frag_Ground_Group_Detailed = [
+    "The protein sequence is {full_sequence}, with a total length of {N}, and the amino acid sequence index starts from 0. Please identify all {task_name} categories present in this sequence, specify how many instances of each category exist, and provide their exact positional coordinates.",
+
+    "Given the protein sequence {full_sequence}, with a total length of {N}, and the amino acid sequence index starts from 0. Can you analyze and enumerate all {task_name} types found in the sequence, including the count of each type and their respective locations?",
+
+    "The protein sequence is {full_sequence}, with a total length of {N}, and the amino acid sequence index starts from 0. Please conduct a comprehensive analysis to identify all {task_name} categories, determine the number of occurrences for each, and list their positions systematically.",
+
+    "Based on the protein sequence {full_sequence}, with a total length of {N}, and the amino acid sequence index starts from 0. Could you identify all {task_name} elements present in the sequence, count how many instances of each type exist, and provide their coordinate ranges?",
+
+    "The protein sequence is {full_sequence}, with a total length of {N}, and the amino acid sequence index starts from 0. Please examine the sequence to locate all {task_name} categories, quantify each type, and specify their positional boundaries in detail.",
+
+    "Given the sequence {full_sequence}, with a total length of {N}, and the amino acid sequence index starts from 0. Can you perform a detailed analysis to identify all {task_name} types, count the occurrences of each category, and map their locations within the sequence?",
+
+    "The protein sequence is {full_sequence}, with a total length of {N}, and the amino acid sequence index starts from 0. Please systematically identify all {task_name} categories contained in the protein, determine their frequency, and provide precise positional information.",
+
+    "From the protein sequence {full_sequence}, with a total length of {N}, and the amino acid sequence index starts from 0. Could you analyze and categorize all {task_name} elements, count how many of each type are present, and specify their exact locations?",
+
+    "The protein sequence is {full_sequence}, with a total length of {N}, and the amino acid sequence index starts from 0. Please identify and classify all {task_name} regions, enumerate the instances of each category, and provide their coordinate information in order.",
+
+    "Given the sequence {full_sequence}, with a total length of {N}, and the amino acid sequence index starts from 0. Can you comprehensively analyze all {task_name} types present, quantify each category, and detail their positional ranges throughout the sequence?"
+]
+
+Grounding_Answer_Group_Detailed = [
+    "Based on my analysis of the protein sequence, I identified the following {task_name} categories with their respective counts and detailed positions: {contents}.",
+
+    "The comprehensive analysis reveals multiple {task_name} types in the sequence. Here are the categories with their occurrence counts and precise locations: {contents}.",
+
+    "I found several distinct {task_name} categories in the protein sequence. The detailed breakdown with counts and positions is as follows: {contents}.",
+
+    "My systematic analysis identified various {task_name} elements throughout the sequence. Here's the complete categorization with counts and coordinates: {contents}.",
+
+    "The sequence contains multiple {task_name} types distributed across different regions. Here are the identified categories with their frequencies and exact locations: {contents}.",
+
+    "After thorough examination, I detected several {task_name} categories in the protein sequence. The detailed results showing counts and positions are: {contents}.",
+
+    "The analysis revealed diverse {task_name} types within the sequence. Here's the comprehensive breakdown with occurrence counts and positional data: {contents}.",
+
+    "I identified multiple {task_name} categories distributed throughout the protein sequence. The complete analysis with counts and coordinate information is: {contents}.",
+
+    "The sequence analysis uncovered various {task_name} types at different locations. Here are the detailed findings with category counts and precise positions: {contents}.",
+
+    "My detailed examination identified several {task_name} categories in the sequence. The comprehensive results showing frequencies and exact coordinates are: {contents}."
+]
 
 # Function
 ProteinFunction = [

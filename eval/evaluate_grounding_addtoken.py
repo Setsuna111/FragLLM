@@ -101,18 +101,25 @@ def parse_args():
     parser.add_argument('--world_size', default=1, type=int, help='number of distributed processes')
     parser.add_argument('--local_rank', default=-1, type=int)
     parser.add_argument('--dist_url', default='env://', help='url used to set up distributed training')
+
+    # data
+    parser.add_argument('--use_detailed_template', action='store_true', help='use detailed templates for grounding evaluation')
     
     return parser.parse_args()
 
-def create_dataset(dataset_name, root_dir, split, max_sequence_length=1021):
+def create_dataset(dataset_name, root_dir, split, use_detailed_template, max_sequence_length=1021):
+    print(f"Creating dataset {dataset_name} with use_detailed_template={use_detailed_template}")
     """Create dataset based on dataset name"""
     if dataset_name in GROUNDING_DATASETS:
         dataset_class = GROUNDING_DATASETS[dataset_name]
-        return dataset_class(
+        dataset = dataset_class(
             root_dir=root_dir,
             split=split,
-            max_sequence_length=max_sequence_length
+            max_sequence_length=max_sequence_length,
+            use_detailed_template=use_detailed_template  # 0918 test
         )
+        print(f"Dataset created successfully. Dataset.use_detailed_template={dataset.use_detailed_template}")
+        return dataset
     else:
         raise ValueError(f"Unknown dataset: {dataset_name}. "
                         f"Available datasets: {list(GROUNDING_DATASETS.keys())}")
@@ -123,7 +130,7 @@ def evaluate_dataset(dataset_name, model, tokenizer, data_collator,
     print(f"\n=== Evaluating {dataset_name} dataset ===")
     
     # Create dataset
-    eval_dataset = create_dataset(dataset_name, args.root_dir, args.split)
+    eval_dataset = create_dataset(dataset_name, args.root_dir, args.split, args.use_detailed_template)
     print(f'Dataset {dataset_name} loaded with {len(eval_dataset)} samples')
     
     # Create dataloader
@@ -292,6 +299,8 @@ def evaluate_dataset(dataset_name, model, tokenizer, data_collator,
 
 def main():
     args = parse_args()
+
+    print(f"Arguments: {args}")
     
     # Parse dataset list
     dataset_list = [d.strip() for d in args.datasets.split(',')]

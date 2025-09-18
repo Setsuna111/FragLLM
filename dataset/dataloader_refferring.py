@@ -101,6 +101,7 @@ class FragRefDataset(torch.utils.data.Dataset):
             phrase_start_placeholder: str = '<p>',
             phrase_end_placeholder: str = '</p>',
             perceiver_latent_size: int = 1,
+            use_detailed_template: bool = False,
             **kwargs,
             ):
         super().__init__()
@@ -113,6 +114,7 @@ class FragRefDataset(torch.utils.data.Dataset):
         self.filter_sequence = filter_sequence
         self.sequence_placeholder = sequence_placeholder
         self.perceiver_latent_size = perceiver_latent_size
+        self.use_detailed_template = use_detailed_template
         # Generate multiple fragment placeholders based on latent size
         if perceiver_latent_size > 1:
             self.fragment_placeholder = fragment_placeholder * perceiver_latent_size

@@ -8,6 +8,8 @@ New features
     sequence-based methods：plm.py支持huggingface model card的各种语言模型
     seq&struct-based models：saprot，单独涉及到结构token的转化
 5. 新增两个ground训练模型，由于懒得写loss切换，直接复制了一份，反正最后只选一个，这部分注释先不写了，先push上去该整体model
+6. 更新ground模型可训练
+7. 新增detailed_template
 
 Bug fix
 1. 修正ActRefDesc对data_name的定义

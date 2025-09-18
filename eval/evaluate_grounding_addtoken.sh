@@ -30,6 +30,9 @@ MASTER_PORT=24989     # Master port for distributed training
 #                              DomRefClass, DomRefDesc, EvoRefClass, EvoRefDesc, 
 #                              MotifRefClass, MotifRefDesc
 
+# whether use detailed template
+USE_DETAILED_TEMPLATE=true
+
 # Examples of dataset combinations:
 # DATASETS="Pro2Text"                                    # Single function dataset
 # DATASETS="ActRefClass,ActRefDesc"                      # Multiple reference datasets  
@@ -76,7 +79,8 @@ if [ "$USE_SINGLE_GPU" = true ]; then
         --save_results_dir "$RESULTS_DIR" \
         --temperature "$TEMPERATURE" \
         --single_gpu \
-        --gpu_id "$SINGLE_GPU_ID"
+        --gpu_id "$SINGLE_GPU_ID" \
+        $([ "$USE_DETAILED_TEMPLATE" = true ] && echo "--use_detailed_template")
 else
     echo "Mode: Multi-GPU Distributed (GPUs: $NUM_GPUS)"
     echo "Master Port: $MASTER_PORT"
@@ -94,7 +98,8 @@ else
         --split "$SPLIT" \
         --batch_per_device "$BATCH_PER_DEVICE" \
         --save_results_dir "$RESULTS_DIR" \
-        --temperature "$TEMPERATURE"
+        --temperature "$TEMPERATURE" \
+        $([ "$USE_DETAILED_TEMPLATE" = true ] && echo "--use_detailed_template")
 fi
 
 echo "========================================="

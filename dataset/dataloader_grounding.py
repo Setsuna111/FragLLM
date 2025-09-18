@@ -141,8 +141,8 @@ class FragGroundingSingle(FragRefDataset):
     def create_conversations(self, sequence, answer, position_grd):
         # Choose question template based on detailed template setting
         if self.use_detailed_template:
-            question_template = Frag_Ground_Single_Detailed[0]  # Only one template as requested
-            answer_template = Grounding_Answer_Single_Detailed[0]  # Only one template as requested
+            question_template = random.choice(Frag_Ground_Single_Detailed)
+            answer_template = random.choice(Grounding_Answer_Single_Detailed)
         else:
             question_template = random.choice(self.question_template)
             answer_template = random.choice(self.answer_template) if self.answer_template is not None else None
@@ -435,29 +435,76 @@ class FragGroundingGroup(FragRefDataset):
     #     return conversation, answer
 
     def create_conversations(self, sequence, answer, position_grd):
-        question_template = random.choice(self.question_template)
-        answer_template = random.choice(self.answer_template) if self.answer_template is not None else None
+        # Choose question template based on detailed template setting
+        if self.use_detailed_template:
+            question_template = random.choice(Frag_Ground_Group_Detailed)
+            answer_template = random.choice(Grounding_Answer_Group_Detailed)
+        else:
+            question_template = random.choice(self.question_template)
+            answer_template = random.choice(self.answer_template) if self.answer_template is not None else None
+        
         conversation = [
             {"role": "system", "content": self.system_message},
             {"role": "user", "content": question_template.format(full_sequence=self.sequence_placeholder * (len(sequence)+2), N=len(sequence), task_name=self.task_name_map[self.data_name])
              }
         ]
-        answer_i = ""
-        for j in range(len(answer)):
-            position = ""
-            for i, (start, end) in enumerate(position_grd[j]):
-                # Only use start token for ProteinSAM (as requested) 
-                position +=  f"({self.position_placeholder})"
-                if i < len(position_grd[j]) - 2:
-                    position += ", "
-                elif i == len(position_grd[j]) - 2:
-                    position += " and "
-            answer_i += f"{self.phrase_start_placeholder}{answer[j]}:{position}{self.phrase_end_placeholder}"
-            if j < len(answer) - 2:
-                answer_i += "; "
-            elif j == len(answer) - 2:
-                answer_i += " and "      
-        answer = answer_template.format(task_name=self.task_name_map[self.data_name], contents=answer_i)
+        
+        if self.use_detailed_template:
+            # Detailed template format for group grounding
+            category_details = []
+            
+            for j in range(len(answer)):
+                category_name = answer[j]
+                instance_count = len(position_grd[j])
+                
+                # Build position list for this category
+                positions_for_category = []
+                for i, (start, end) in enumerate(position_grd[j]):
+                    region_num = i + 1
+                    position_placeholder = f"{self.position_placeholder}"
+                    position_info = f"region {region_num} lies within {self.phrase_start_placeholder}{category_name}:{position_placeholder}{self.phrase_end_placeholder}"
+                    positions_for_category.append(position_info)
+                
+                # Join positions with appropriate connectors
+                if len(positions_for_category) == 1:
+                    positions_str = positions_for_category[0]
+                elif len(positions_for_category) == 2:
+                    positions_str = f"{positions_for_category[0]} and {positions_for_category[1]}"
+                else:
+                    positions_str = ", ".join(positions_for_category[:-1]) + f", and {positions_for_category[-1]}"
+                
+                # Format: "CategoryName (X instances): position details"
+                category_detail = f"{category_name} ({instance_count} instance{'s' if instance_count > 1 else ''}): {positions_str}"
+                category_details.append(category_detail)
+            
+            # Join all categories
+            if len(category_details) == 1:
+                contents = category_details[0]
+            elif len(category_details) == 2:
+                contents = f"{category_details[0]}; {category_details[1]}"
+            else:
+                contents = "; ".join(category_details[:-1]) + f"; {category_details[-1]}"
+            
+            answer = answer_template.format(task_name=self.task_name_map[self.data_name], contents=contents)
+        else:
+            # Original template format
+            answer_i = ""
+            for j in range(len(answer)):
+                position = ""
+                for i, (start, end) in enumerate(position_grd[j]):
+                    # Only use start token for ProteinSAM (as requested) 
+                    position +=  f"({self.position_placeholder})"
+                    if i < len(position_grd[j]) - 2:
+                        position += ", "
+                    elif i == len(position_grd[j]) - 2:
+                        position += " and "
+                answer_i += f"{self.phrase_start_placeholder}{answer[j]}:{position}{self.phrase_end_placeholder}"
+                if j < len(answer) - 2:
+                    answer_i += "; "
+                elif j == len(answer) - 2:
+                    answer_i += " and "      
+            answer = answer_template.format(task_name=self.task_name_map[self.data_name], contents=answer_i)
+        
         return conversation, answer
 
     def sort_position(self, position_grd):
