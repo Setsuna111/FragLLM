@@ -91,6 +91,7 @@ class FragGroundingSingle(FragRefDataset):
             split: str,
             task_type: str,
             max_sequence_length: Optional[int] = 1021,
+            use_detailed_template: bool = False,
             **kwargs,
             ):
         super().__init__(
@@ -101,6 +102,7 @@ class FragGroundingSingle(FragRefDataset):
             max_sequence_length=max_sequence_length, 
             **kwargs,
             )
+        self.use_detailed_template = use_detailed_template
         self.data_infos = self._filter_grounding(self.data_infos)
 
     # 过滤掉所有片段最大位置和最小位置之差大于max_sequence_length的data
@@ -137,30 +139,57 @@ class FragGroundingSingle(FragRefDataset):
         return data_infos
     
     def create_conversations(self, sequence, answer, position_grd):
-        question_template = random.choice(self.question_template)
-        answer_template = random.choice(self.answer_template) if self.answer_template is not None else None
+        # Choose question template based on detailed template setting
+        if self.use_detailed_template:
+            question_template = Frag_Ground_Single_Detailed[0]  # Only one template as requested
+            answer_template = Grounding_Answer_Single_Detailed[0]  # Only one template as requested
+        else:
+            question_template = random.choice(self.question_template)
+            answer_template = random.choice(self.answer_template) if self.answer_template is not None else None
+            
         conversation = [
             {"role": "system", "content": self.system_message},
             {"role": "user", "content": question_template.format(full_sequence=self.sequence_placeholder * (len(sequence)+2), N=len(sequence), class_name=answer)
              }
         ]
-        position = ""
-        # for i, (start, end) in enumerate(position_grd[0]):
-        #     # position +=  f"{self.pos_start_placeholder}({start},{end}){self.pos_end_placeholder}"
-        #     position +=  f"({start},{end})"
-        #     if i < len(position_grd[0]) - 2:
-        #         position += ","
-        #     elif i == len(position_grd[0]) - 2:
-        #         position += " and "
-        for i, (start, end) in enumerate(position_grd[0]):
-            # Only use start token for ProteinSAM (as requested)
-            position +=  f"{self.position_placeholder}"
-            if i < len(position_grd[0]) - 2:
-                position += ","
-            elif i == len(position_grd[0]) - 2:
-                position += " and "
-        position = f"{self.phrase_start_placeholder}{answer}:{position}{self.phrase_end_placeholder}"
-        answer = answer_template.format(class_name=answer, position=position)
+        
+        if self.use_detailed_template:
+            # New detailed template format
+            region_count = len(position_grd[0])
+            detailed_positions = []
+            
+            for i, (start, end) in enumerate(position_grd[0]):
+                region_num = i + 1
+                position_placeholder = f"{self.position_placeholder}"
+                detailed_position = f"region {region_num} lies within {self.phrase_start_placeholder}{answer}:{position_placeholder}{self.phrase_end_placeholder}"
+                detailed_positions.append(detailed_position)
+            
+            # Join with appropriate connectors
+            if len(detailed_positions) == 1:
+                detailed_positions_str = detailed_positions[0]
+            elif len(detailed_positions) == 2:
+                detailed_positions_str = f"{detailed_positions[0]} and {detailed_positions[1]}"
+            else:
+                detailed_positions_str = ", ".join(detailed_positions[:-1]) + f", and {detailed_positions[-1]}"
+            
+            answer = answer_template.format(
+                class_name=answer, 
+                region_count=region_count,
+                detailed_positions=detailed_positions_str
+            )
+        else:
+            # Original template format
+            position = ""
+            for i, (start, end) in enumerate(position_grd[0]):
+                # Only use start token for ProteinSAM (as requested)
+                position +=  f"{self.position_placeholder}"
+                if i < len(position_grd[0]) - 2:
+                    position += ","
+                elif i == len(position_grd[0]) - 2:
+                    position += " and "
+            position = f"{self.phrase_start_placeholder}{answer}:{position}{self.phrase_end_placeholder}"
+            answer = answer_template.format(class_name=answer, position=position)
+            
         return conversation, answer
 
     def sort_position(self, position_grd):
@@ -212,6 +241,7 @@ class DomainGroundingSingle(FragGroundingSingle):
             root_dir: str, 
             split: str, 
             max_sequence_length: Optional[int] = 1021,
+            use_detailed_template: bool = False,
             **kwargs,
             ):
         data_name = "VenusX_Dom"
@@ -224,6 +254,7 @@ class DomainGroundingSingle(FragGroundingSingle):
             split=split, 
             task_type=task_type, 
             max_sequence_length=max_sequence_length,
+            use_detailed_template=use_detailed_template,
             question_template=question_template,
             answer_template=answer_template,
             **kwargs,
@@ -234,6 +265,7 @@ class ActGroundingSingle(FragGroundingSingle):
             root_dir: str, 
             split: str, 
             max_sequence_length: Optional[int] = 1021,
+            use_detailed_template: bool = False,
             **kwargs,
             ):
         data_name = "VenusX_Act"
@@ -246,6 +278,7 @@ class ActGroundingSingle(FragGroundingSingle):
             split=split, 
             task_type=task_type, 
             max_sequence_length=max_sequence_length,
+            use_detailed_template=use_detailed_template,
             question_template=question_template,
             answer_template=answer_template,
             **kwargs,
@@ -256,6 +289,7 @@ class BindIGroundingSingle(FragGroundingSingle):
             root_dir: str, 
             split: str, 
             max_sequence_length: Optional[int] = 1021,
+            use_detailed_template: bool = False,
             **kwargs,
             ):
         data_name = "VenusX_BindI"
@@ -268,6 +302,7 @@ class BindIGroundingSingle(FragGroundingSingle):
             split=split, 
             task_type=task_type, 
             max_sequence_length=max_sequence_length,
+            use_detailed_template=use_detailed_template,
             question_template=question_template,
             answer_template=answer_template,
             **kwargs,
@@ -278,6 +313,7 @@ class MotifGroundingSingle(FragGroundingSingle):
             root_dir: str, 
             split: str, 
             max_sequence_length: Optional[int] = 1021,
+            use_detailed_template: bool = False,
             **kwargs,
             ):
         data_name = "VenusX_Motif"
@@ -290,6 +326,7 @@ class MotifGroundingSingle(FragGroundingSingle):
             split=split, 
             task_type=task_type, 
             max_sequence_length=max_sequence_length,
+            use_detailed_template=use_detailed_template,
             question_template=question_template,
             answer_template=answer_template,
             **kwargs,
@@ -301,6 +338,7 @@ class EvoGroundingSingle(FragGroundingSingle):
             root_dir: str, 
             split: str, 
             max_sequence_length: Optional[int] = 1021,
+            use_detailed_template: bool = False,
             **kwargs,
             ):
         data_name = "VenusX_Evo"
@@ -313,6 +351,7 @@ class EvoGroundingSingle(FragGroundingSingle):
             split=split, 
             task_type=task_type, 
             max_sequence_length=max_sequence_length,
+            use_detailed_template=use_detailed_template,
             question_template=question_template,
             answer_template=answer_template,
             **kwargs,

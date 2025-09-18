@@ -12,7 +12,7 @@ sys.path.append("..")
 sys.path.append(".")
 
 import os
-# os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+# os.environ["CUDA_VISIBLE_DEVICES"] = "7"
 
 import pathlib
 import transformers
@@ -86,6 +86,7 @@ class FragModelArguments:
 class FragDataArguments:
     """Data arguments for fragment training."""
     root_dir: Optional[str] = field(default="./data", metadata={"help": "Root directory for datasets"})
+    use_detailed_template: Optional[bool] = field(default=False, metadata={"help": "Whether to use detailed template"})
     dataset_train_config: Optional[str] = field(default="ActGroundSingle", metadata={"help": "Dataset config for training"})
     sample_rate_train: Optional[str] = field(default="1", metadata={"help": "Sample rate for training"})
     dataset_valid_config: Optional[str] = field(default=None, metadata={"help": "Dataset config for evaluation"})
@@ -421,9 +422,6 @@ def safe_save_model_for_hf_trainer(trainer: transformers.Trainer,
         del state_dict
         trainer._save(output_dir, state_dict=cpu_state_dict)  # noqa
 
-
-
-
 def train(attn_implementation=None):
     global local_rank
     """Main training function."""
@@ -440,7 +438,6 @@ def train(attn_implementation=None):
         torch_dtype = torch.float16
     else:
         torch_dtype = torch.float32
-
 
     # Load base models
     model = ProteinLlamaForCausalLM.from_pretrained(
@@ -460,7 +457,6 @@ def train(attn_implementation=None):
             def make_inputs_require_grad(module, input, output):
                 output.requires_grad_(True)
             model.get_input_embeddings().register_forward_hook(make_inputs_require_grad)
-
 
     if training_args.lora_enable:
         print("Initializing LoRA adapter")
@@ -562,6 +558,7 @@ def train(attn_implementation=None):
     rank0_print(model.device)
     data_args.sequence_tokenizer = esm_tokenizer
     data_args.llm_tokenizer = llama_tokenizer
+    data_args.perceiver_latent_size = model_args.perceiver_latent_size
     data_module = make_multitask_dataset(data_args)
     
     # Create trainer

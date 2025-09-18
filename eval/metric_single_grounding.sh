@@ -4,7 +4,7 @@
 
 export PYTHONPATH="./:$PYTHONPATH"
 # Results_Path=./eval_results/single_grounding/fragment_training_only_stage2_bw_stage1_lora32_epoch1_0907_grounding_single_merge/DomGroundSingle_results.csv
-Path="/home/lfj/projects_dir/FragLLM/eval_results/single_grounding/grounding_lora_iousam_0917test_2/ActGroundSingle_results.csv"
+Path="/home/lfj/projects_dir/FragLLM/eval_results/single_grounding/grounding_lora_0918_trainable_iousam/ActGroundSingle_results.csv"
 IOU_Threshold=0.5
 
 

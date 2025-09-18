@@ -164,14 +164,16 @@ def predict_fragment_locations(test_protein_sequence, fragment_sequences,
         
         # Run BLAST with fragment sequences as queries
         query_sequences = [(f"frag_{i}", seq) for i, seq in enumerate(fragment_sequences)]
-        blast_results = run_blastp_alignment(query_sequences, db_path, evalue_threshold=evalue_threshold*100)
+        # blast_results = run_blastp_alignment(query_sequences, db_path, evalue_threshold=evalue_threshold*100)
+        blast_results = run_blastp_alignment(query_sequences, db_path, evalue_threshold=evalue_threshold)
     
     # Filter and process results
     predicted_ranges = []
     for result in blast_results:
         # Apply thresholds
-        if (result['pident'] >= identity_threshold and 
-            result['evalue'] <= evalue_threshold):
+        # if (result['pident'] >= identity_threshold and 
+            # result['evalue'] <= evalue_threshold):
+        if (result['evalue'] <= evalue_threshold):
             
             # Check coverage threshold (Optional)
             # query_coverage = result['length'] / len(fragment_sequences[int(result['query_id'].split('_')[1])])
@@ -310,9 +312,11 @@ def main():
                        help="Task type: single localization, multiple localization, or both")
     parser.add_argument("--output_dir", type=str, default="baselines/blast_cls_results",
                        help="Output directory for results")
+    # parser.add_argument("--identity_threshold", type=float, default=50.0,
+    #                    help="Minimum identity percentage for BLAST hits")
     parser.add_argument("--identity_threshold", type=float, default=30.0,
                        help="Minimum identity percentage for BLAST hits")
-    parser.add_argument("--evalue_threshold", type=float, default=1e-3,
+    parser.add_argument("--evalue_threshold", type=float, default=1e-2,
                        help="Maximum E-value for BLAST hits")
     parser.add_argument("--coverage_threshold", type=float, default=0.5,
                        help="Minimum coverage threshold for fragment alignment")

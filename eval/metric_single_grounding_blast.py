@@ -5,7 +5,7 @@ import numpy as np
 from typing import Any, Dict, List
 import json
 argParser = argparse.ArgumentParser()
-argParser.add_argument("--results_path",default="/home/lfj/projects_dir/FragLLM/baselines/blast_cls_results/VenusX_BindI/single_localization_results.csv", type=str, help="path to BLAST classification results CSV file")
+argParser.add_argument("--results_path",default="/home/lfj/projects_dir/FragLLM/baselines/blast_cls_results/VenusX_Act/single_localization_results.csv", type=str, help="path to BLAST classification results CSV file")
 argParser.add_argument("--iou_threshold", default=0.5, type=float, help="iou threshold")
 
 args = argParser.parse_args()

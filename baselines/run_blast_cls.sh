@@ -4,7 +4,7 @@
 # Usage: ./run_blast_cls.sh [dataset] [task]
 
 DATASET=${1:-"Act"}
-TASK=${2:-"multiple"}
+TASK=${2:-"single"}
 
 if [[ "$DATASET" == "all" ]]; then
     for ds in Act BindI Evo Motif Dom; do

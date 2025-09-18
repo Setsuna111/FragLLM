@@ -194,13 +194,22 @@ Grounding_Answer_Single = [
 
     "This {class_name} appears at {position}.",
 
-    "You’ll find the {class_name} in the segment {position}.",
+    "You'll find the {class_name} in the segment {position}.",
 
     "It can be found in the region {position}.",
 
     "The position of the {class_name} is {position}.",
 
     "The fragment for the {class_name} lies within {position}."
+]
+
+# New detailed grounding templates
+Frag_Ground_Single_Detailed = [
+    "The protein sequence is {full_sequence}, with a total length of {N}, and the amino acid sequence index starts from 0. Please identify how many {class_name} regions exist in this sequence and provide their positions from left to right."
+]
+
+Grounding_Answer_Single_Detailed = [
+    "The fragment for the {class_name} lies within {region_count} regions: {detailed_positions}."
 ]
 
 # Grounding Full Protein

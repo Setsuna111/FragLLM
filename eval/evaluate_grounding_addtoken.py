@@ -86,15 +86,15 @@ def replace_matches_sequentially(
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Unified evaluation script for function and reference datasets')
-    parser.add_argument("--model_path", default="/home/lfj/projects_dir/FragLLM/checkpoints/grounding_lora_save_test_merge_addtoken/", help="path to the trained model")
+    parser.add_argument("--model_path", default="/home/lfj/projects_dir/FragLLM/checkpoints/grounding_lora_0918_only_act_trainable_clssam_merge_addtoken/", help="path to the trained model")
     parser.add_argument("--temperature", default=0.0, type=float, help="generation temperature")
     parser.add_argument("--root_dir", default='./data', help="root folder of the data")
     parser.add_argument("--datasets", default="ActGroundSingle", help="comma-separated list of datasets to evaluate")
     parser.add_argument("--split", default="test", help="data split to use (train, test, eval)")
     parser.add_argument("--batch_per_device", type=int, default=2, help="batch size for each device")
     parser.add_argument("--save_results_dir", default="./eval_results", help="directory to save results")
-    # parser.add_argument("--single_gpu", action="store_true", help="use single GPU mode instead of distributed")
-    parser.add_argument("--single_gpu", default=True, help="use single GPU mode instead of distributed")
+    parser.add_argument("--single_gpu", action="store_true", help="use single GPU mode instead of distributed")
+    # parser.add_argument("--single_gpu", default=True, help="use single GPU mode instead of distributed")
     parser.add_argument("--gpu_id", type=int, default=0, help="GPU ID to use in single GPU mode")
     
     # Distributed training arguments

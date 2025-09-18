@@ -7,8 +7,8 @@ import sys
 import os
 
 # Add model_grounding to path for ProteinSAM
-# sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'model_grounding'))
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'model_grounding_iou'))
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'model_grounding'))
+# sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'model_grounding_iou'))
 from protein_sam import ProteinSAM
 
 class FeedForwardNetwork(nn.Module):
@@ -194,7 +194,7 @@ class ProteinMetaModel:
                 esm_model_path="/home/lfj/projects_dir/pretrained_model/esm2_t30_150M_UR50D/",
                 llama_model_path=None,  # No LLaMA needed
                 decoder_num_heads=8,
-                decoder_num_layers=4,  # 0917 test
+                decoder_num_layers=2,
                 decoder_intermediate_size=512,
                 max_sequence_length=1021,
                 dropout_rate=0.1,
@@ -240,7 +240,7 @@ class ProteinMetaModel:
                 esm_model_path="/home/lfj/projects_dir/pretrained_model/esm2_t30_150M_UR50D/",
                 llama_model_path=None,  # No LLaMA needed
                 decoder_num_heads=8,
-                decoder_num_layers=4,  # 0917 test
+                decoder_num_layers=2,
                 decoder_intermediate_size=512,
                 max_sequence_length=1021,
                 dropout_rate=0.1,
@@ -251,8 +251,8 @@ class ProteinMetaModel:
             )
             
             # Load pretrained ProteinSAM weights
-            # proteinSAM_checkpoint_path = os.path.join(os.path.dirname(__file__), '..', 'model_grounding', 'checkpoints_grounding', 'best_model.pt')
-            proteinSAM_checkpoint_path = os.path.join(os.path.dirname(__file__), '..', 'model_grounding_iou', 'checkpoints_grounding_0916', 'best_model.pt')
+            proteinSAM_checkpoint_path = os.path.join(os.path.dirname(__file__), '..', 'model_grounding', 'checkpoints_grounding', 'best_model.pt')
+            # proteinSAM_checkpoint_path = os.path.join(os.path.dirname(__file__), '..', 'model_grounding_iou', 'checkpoints_grounding_0916', 'best_model.pt')
             proteinSAM_checkpoint_path = os.path.abspath(proteinSAM_checkpoint_path)
             
             assert os.path.exists(proteinSAM_checkpoint_path), f"ProteinSAM checkpoint not found at {proteinSAM_checkpoint_path}"
@@ -389,5 +389,4 @@ class ProteinMetaForCausalLM(ABC):
         #         inputs_embeds_list.append(inputs_embeds[i])
         # inputs_embeds = torch.stack(inputs_embeds_list, dim=0)
 
-    
         return None, position_ids, attention_mask, past_key_values, inputs_embeds, labels, encoder_output, adapter_output, encoder_attention_mask

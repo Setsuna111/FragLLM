@@ -534,6 +534,8 @@ def make_multitask_dataset(data_args):
         sample_rate_train=data_args.sample_rate_train,
         split="train",
         max_sequence_length=data_args.max_sequence_length,
+        perceiver_latent_size=data_args.perceiver_latent_size,
+        use_detailed_template=data_args.use_detailed_template,
     )
     data_collator = FragDataCollator(
         sequence_tokenizer=data_args.sequence_tokenizer,

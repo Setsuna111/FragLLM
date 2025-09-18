@@ -124,8 +124,11 @@ def load_pretrained_model_fragllm_addtoken(model_path, model_base, model_name, l
 
     esm_encoder = EsmModel.from_pretrained(model.config.esm_path, add_pooling_layer=False)
     model.get_model().esm_encoder = esm_encoder
-    
 
+    # 看起来需要这样操作一下，虽然不知道为什么
+    sam_esm_encoder = EsmModel.from_pretrained("/home/lfj/projects_dir/pretrained_model/esm2_t30_150M_UR50D/", add_pooling_layer=False)
+    model.get_model().protein_sam.protein_encoder = sam_esm_encoder
+    
     return tokenizer, model, esm_encoder
 
 def get_model_name_from_path(model_path):
@@ -152,7 +155,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     
     # 0917 test
-    model_path = "/home/lfj/projects_dir/FragLLM/checkpoints/grounding_lora_save_test/"
+    model_path = "/home/lfj/projects_dir/FragLLM/checkpoints/grounding_lora_only_act_trainable_iousam/"
 
     model_path = model_path.rstrip('/')
     merged_path = model_path + "_merge_addtoken"

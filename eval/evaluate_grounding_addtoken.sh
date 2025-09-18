@@ -8,9 +8,9 @@
 # ======================================
 
 # Model and data paths
-MODEL_PATH="/home/lfj/projects_dir/FragLLM/checkpoints/grounding_lora_only_act_iousam_0917_merge_addtoken/"
+MODEL_PATH="/home/lfj/projects_dir/FragLLM/checkpoints/grounding_lora_only_act_trainable_iousam_merge_addtoken/"
 ROOT_DIR="./data"
-RESULTS_DIR="./eval_results/single_grounding/grounding_lora_iousam_0917test_2"
+RESULTS_DIR="./eval_results/single_grounding/grounding_lora_0918_trainable_iousam"
 
 # Evaluation parameters
 SPLIT="test"
