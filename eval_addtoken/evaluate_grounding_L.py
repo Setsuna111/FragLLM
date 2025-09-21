@@ -203,7 +203,7 @@ def evaluate_dataset(dataset_name, model, tokenizer, data_collator,
         answers_pred = tokenizer.batch_decode(tok_ids)
         answers_pred_replace = []
         for i, answer_pred in enumerate(answers_pred):
-            position_grd_pred = list(zip(position_grds_pred[i].tolist()[::2], position_grds_pred[i].tolist()[1::2]))
+            position_grd_pred = list(zip(position_grds_pred[i][::2], position_grds_pred[i][1::2]))
             pred_position_grds.append(position_grd_pred)
             answer_pred_replace = replace_matches_sequentially(answer_pred, pattern, position_grd_pred)
             answers_pred_replace.append(answer_pred_replace.replace("<|reserved_special_token_0|>", "").replace("<|eot_id|>", ""))
