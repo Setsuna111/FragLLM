@@ -37,20 +37,20 @@ def main():
     peft_config = PeftConfig.from_pretrained(args.model_path)
     model = ProteinLlamaForCausalLM.from_pretrained(peft_config.base_model_name_or_path)
     tokenizer = AutoTokenizer.from_pretrained(
-        peft_config.base_model_name_or_path,
+        args.model_path,
         pad_token='<|reserved_special_token_0|>'
     )
     model = get_peft_model(model, peft_config)
     model.config.ce_loss_weight = model_args.ce_loss_weight
     model.config.position_loss_weight = model_args.position_loss_weight
-    if model.lm_head.weight.shape[0] != peft_config.vocab_size:
-        tokenizer.add_tokens([
-            data_args.pos_start_placeholder,
-            data_args.pos_end_placeholder,
-            data_args.phrase_start_placeholder,
-            data_args.phrase_end_placeholder
-        ], special_tokens=True)
-        assert model.lm_head.weight.shape[0] == len(tokenizer)
+    if model.lm_head.weight.shape[0] != len(tokenizer):
+        # tokenizer.add_tokens([
+        #     data_args.pos_start_placeholder,
+        #     data_args.pos_end_placeholder,
+        #     data_args.phrase_start_placeholder,
+        #     data_args.phrase_end_placeholder
+        # ], special_tokens=True)
+        # assert model.lm_head.weight.shape[0] == len(tokenizer)
         model.resize_token_embeddings(len(tokenizer))
         model.config.pos_start_placeholder_id = tokenizer.convert_tokens_to_ids(data_args.pos_start_placeholder)
         model.config.pos_end_placeholder_id = tokenizer.convert_tokens_to_ids(data_args.pos_end_placeholder)
