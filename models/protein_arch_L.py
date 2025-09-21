@@ -177,15 +177,52 @@ class FragmentPositionDecoder01(nn.Module):
         self.output_layer_norm = nn.LayerNorm(emb_dim)
         self.output_proj = nn.Linear(emb_dim, pos_num, bias=False)
 
+    # def forward(self, latents: Tensor, hidden_states: Tensor) -> Tensor:
+    #     """Cross-attend hidden_states and latents and self-attend latents."""
+    #     residuals = hidden_states # [num_positions, seq_L, emb_dim]
+    #     latents = torch.cat((hidden_states, latents), dim=-2)
+    #     hidden_states, _ = self.attn(hidden_states, latents, latents)
+    #     hidden_states = self.ffn(residuals + hidden_states) + residuals # [num_positions, seq_L, 1]
+    #     out: Tensor = self.output_layer_norm(hidden_states)
+    #     out = self.output_proj(out).transpose(1, 2)  # (num_positions, L, 1) -> (num_positions, 1, L)
+    #     return out
     def forward(self, latents: Tensor, hidden_states: Tensor) -> Tensor:
         """Cross-attend hidden_states and latents and self-attend latents."""
+        # 将 hidden_states按照第0维进行每两个划分，然后拼接
         residuals = hidden_states # [num_positions, seq_L, emb_dim]
-        latents = torch.cat((hidden_states, latents), dim=-2)
-        hidden_states, _ = self.attn(hidden_states, latents, latents)
+        latents = torch.cat((hidden_states, latents), dim=-2) # [num_positions, seq_L+1, emb_dim]
+        # hidden_states, _ = self.attn(hidden_states, latents, latents)
+        hidden_states_list = []
+        for i, hidden_state in enumerate(hidden_states):
+            hidden_states_list.append(self.attn(hidden_state.unsqueeze(0), latents[i].unsqueeze(0), latents[i].unsqueeze(0))[0])
+        hidden_states = torch.cat(hidden_states_list, dim=0)
         hidden_states = self.ffn(residuals + hidden_states) + residuals # [num_positions, seq_L, 1]
         out: Tensor = self.output_layer_norm(hidden_states)
         out = self.output_proj(out).transpose(1, 2)  # (num_positions, L, 1) -> (num_positions, 1, L)
         return out
+
+# # 对序列做0，1分类（类似于分割任务, 用esm的输出特征
+# class FragmentPositionDecoder01(nn.Module):
+#     """Decoder for fragment positions."""
+#     def __init__(self,text_emb_dim: int, emb_dim: int, pos_num: int, num_heads: int, dropout: float) -> None:
+#         """Init."""
+#         super().__init__()
+#         self.text2hidden = nn.Linear(text_emb_dim, emb_dim)
+#         self.attn = nn.MultiheadAttention(emb_dim, num_heads, dropout=dropout, batch_first=True)
+#         self.ffn = FeedForwardNetwork(emb_dim, dropout, ff_expansion=0.5)
+#         self.output_layer_norm = nn.LayerNorm(emb_dim)
+#         self.output_proj = nn.Linear(emb_dim, pos_num, bias=False)
+
+#     def forward(self, latents: Tensor, hidden_states: Tensor) -> Tensor:
+#         """Cross-attend hidden_states and latents and self-attend latents."""
+#         residuals = hidden_states # [num_positions, seq_L, emb_dim]
+#         latents = self.text2hidden(latents)
+#         latents = torch.cat((hidden_states, latents), dim=-2)
+#         hidden_states, _ = self.attn(hidden_states, latents, latents)
+#         hidden_states = self.ffn(residuals + hidden_states) + residuals # [num_positions, seq_L, 1]
+#         out: Tensor = self.output_layer_norm(hidden_states)
+#         out = self.output_proj(out).transpose(1, 2)  # (num_positions, L, 1) -> (num_positions, 1, L)
+#         return out
 
 class ModalityAdapter(nn.Module):
     """2-layer adapter to match the hidden size of different modalities."""

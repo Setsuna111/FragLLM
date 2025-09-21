@@ -193,6 +193,8 @@ class ProteinLlamaForCausalLM(LlamaForCausalLM, ProteinMetaForCausalLM):
                     # protein_hidden_states = adapter_output[i][encoder_attention_mask[i].bool()]#(num_proteins, 1024)
                     # TODO: 用序列做0，1分类时，要注意对ESM_hidden_states进行掐头去尾
                     protein_hidden_states = adapter_output[i][encoder_attention_mask[i].bool()][1:-1]
+                    # import pdb; pdb.set_trace()
+                    # protein_hidden_states = encoder_output[0][i][encoder_attention_mask[i].bool()][1:-1]
                     position_grds_pred.append(self.get_model().fragment_position_decoder(postoken_hidden_states.unsqueeze(1).contiguous(), protein_hidden_states.unsqueeze(0).expand(postoken_hidden_states.shape[0], -1, -1).contiguous()).squeeze(1))
                 else:
                     assert position_grds[i] is None
@@ -394,6 +396,7 @@ class ProteinLlamaForCausalLM(LlamaForCausalLM, ProteinMetaForCausalLM):
                         """使用adapter输出的proteins hidden states预测位置"""
                         postoken_hidden_states = output_hidden_states[i][position_mask] # (num_positions, 4096)
                         protein_hidden_states = adapter_output[i][encoder_attention_mask[i].bool()][1:-1] #(num_proteins, 4096)
+                        # protein_hidden_states = encoder_output[0][i][encoder_attention_mask[i].bool()][1:-1] #(num_proteins, 4096)
                         position_grds_pred.append(self.get_model().fragment_position_decoder(postoken_hidden_states.unsqueeze(1).contiguous(), protein_hidden_states.unsqueeze(0).expand(postoken_hidden_states.shape[0], -1, -1).contiguous()).squeeze(1))
                     # """0, 1分类"""
                     else:
