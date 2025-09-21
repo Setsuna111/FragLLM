@@ -1,3 +1,11 @@
+0921 djy
+1. dataset/dataloader_grounding.py 替换了groundsingle数据集中的模板嵌入方式，确保多个区间的特殊token被区间顺序名称（REGION1，REGION2等给隔离开，保证特殊token的hidden states不那么相似；
+2. dataset/templates.py 替换了新的groudsingle的问答模板Frag_Ground_Single_Detailed；
+3. eval/metric_group_grounding.py eval/metric_single_grounding.py eval_addtoken/metric_group_grounding.py eval_addtoken/metric_single_grounding.py, 更改了区间匹配的度量方式，将区域中心距离度量更改为区间iou度量；
+4. models/protein_arch_L.py models/protein_llama_L.py 将fragmentposdecoder的batch attn 执行方式替换为了逐个样本执行atten，降低显存占用；
+5. eval_addtoken/evaluate_grounding_L.py 删除了206行的position_grds_pred[i].tolist()操作
+6. 
+
 0917 djy
 1. models/protein_llama.py和models/protein_arch.py
     （1）添加了postoken解码层，每个postoken做1022分类进行定位；
