@@ -4,7 +4,7 @@
 3. eval/metric_group_grounding.py eval/metric_single_grounding.py eval_addtoken/metric_group_grounding.py eval_addtoken/metric_single_grounding.py, 更改了区间匹配的度量方式，将区域中心距离度量更改为区间iou度量；
 4. models/protein_arch_L.py models/protein_llama_L.py 将fragmentposdecoder的batch attn 执行方式替换为了逐个样本执行atten，降低显存占用；
 5. eval_addtoken/evaluate_grounding_L.py 删除了206行的position_grds_pred[i].tolist()操作
-6. 
+6.  merge_lora_weights_checkpoint_addtoken.py merge_lora_weights_checkpoint_addtoken_L.py 修改了添加了特殊token时模型lora权重合并中tokenizer加载方式和model特殊token的id初始化方式
 
 0917 djy
 1. models/protein_llama.py和models/protein_arch.py
