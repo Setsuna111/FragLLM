@@ -68,60 +68,91 @@ def extract_position_single(response):
             continue
     return positions # list of strings
 
+# # extract the class name from the responses
+# def extract_class_name(response):
+#     if " at " in response:
+#         class_name = response.split(" at ")[0]
+#     else:
+#         # 找到re.compile(r'\(\s*(\d+)\s*,\s*(\d+)\s*\)')所在的第一个位置
+#         pattern = re.compile(r'\(\s*(\d+)\s*,\s*(\d+)\s*\)')
+#         match = pattern.search(response)
+#         if match:
+#             start_idx = match.start()   # 匹配到的起始位置
+#             if start_idx == 1:
+#                 import pdb; pdb.set_trace()
+#             print("起始位置:", start_idx)
+#             class_name = response[:start_idx]
+#         else:
+#             # import pdb; pdb.set_trace()
+#             print("未找到匹配:", response)
+#             class_name = response
+#     return class_name
+
 # extract the class name from the responses
 def extract_class_name(response):
-    if " at " in response:
-        class_name = response.split(" at ")[0]
-    else:
-        # 找到re.compile(r'\(\s*(\d+)\s*,\s*(\d+)\s*\)')所在的第一个位置
-        pattern = re.compile(r'\(\s*(\d+)\s*,\s*(\d+)\s*\)')
-        match = pattern.search(response)
-        if match:
-            start_idx = match.start()   # 匹配到的起始位置
-            if start_idx == 1:
-                import pdb; pdb.set_trace()
-            print("起始位置:", start_idx)
-            class_name = response[:start_idx]
-        else:
-            # import pdb; pdb.set_trace()
-            print("未找到匹配")
-            class_name = response
+    class_name = response.split(":")[0].strip()
     return class_name
+
+# # extract the target from the responses
+# def extract_target(response):
+#     # 找到response中第一个“:”的位置
+#     colon_idx = response.find(":")
+#     target = response[colon_idx+1:].strip() 
+#     targets = target.split(";")
+#     targets_clean = []
+#     for target in targets:
+#         if " and " in target and "and (" not in target:
+#             targets_clean.extend(target.split(" and "))
+#         else:
+#             targets_clean.append(target.strip())
+#     return targets_clean
 
 # extract the target from the responses
 def extract_target(response):
     # 找到response中第一个“:”的位置
-    colon_idx = response.find(":")
-    target = response[colon_idx+1:].strip() 
-    targets = target.split(";")
-    targets_clean = []
-    for target in targets:
-        if " and " in target and "and (" not in target:
-            targets_clean.extend(target.split(" and "))
-        else:
-            targets_clean.append(target.strip())
-    return targets_clean
+    pattern = re.compile(r'<p>(.*?)</p>')
+    matches = pattern.findall(response)
+    targets = []
+    for match in matches:
+        targets.append(match.strip())
+    return targets
+
 
 def match_positions(prediction_positions, reference_positions):
     # Match the positions with position interval distance
     matched_pred_positions = []
     matched_ref_positions = []
     # 计算区间中心点
-    pred_centers = [(a[0] + a[1]) / 2.0 for a in prediction_positions]
-    ref_centers = [(b[0] + b[1]) / 2.0 for b in reference_positions]
-    dist_matrix = np.zeros((len(pred_centers), len(ref_centers)))
-    for i, ac in enumerate(pred_centers):
-        for j, bc in enumerate(ref_centers):
-            dist_matrix[i, j] = abs(ac - bc)
+    # pred_centers = [(a[0] + a[1]) / 2.0 for a in prediction_positions]
+    # ref_centers = [(b[0] + b[1]) / 2.0 for b in reference_positions]
+    # dist_matrix = np.zeros((len(pred_centers), len(ref_centers)))
+    # for i, ac in enumerate(pred_centers):
+    #     for j, bc in enumerate(ref_centers):
+    #         dist_matrix[i, j] = abs(ac - bc)
+    # # Find one-to-one matches
+    # matched_pred_positions = []
+    # matched_ref_positions = []
+    # while (dist_matrix!=1024).any():
+    #     min_dist_idx = np.unravel_index(np.argmin(dist_matrix), dist_matrix.shape)
+    #     matched_pred_positions.append(prediction_positions[min_dist_idx[0]])
+    #     matched_ref_positions.append(reference_positions[min_dist_idx[1]])
+    #     dist_matrix[min_dist_idx[0], :] = 1024
+    #     dist_matrix[:, min_dist_idx[1]] = 1024
+
+    # iou矩阵
+    dist_matrix = np.zeros((len(prediction_positions), len(reference_positions)))
+    for i, pred_pos in enumerate(prediction_positions):
+        for j, ref_pos in enumerate(reference_positions):
+            dist_matrix[i, j] = compute_iou_single(pred_pos, ref_pos)
     # Find one-to-one matches
     matched_pred_positions = []
     matched_ref_positions = []
-    while (dist_matrix!=1024).any():
-        min_dist_idx = np.unravel_index(np.argmin(dist_matrix), dist_matrix.shape)
-        matched_pred_positions.append(prediction_positions[min_dist_idx[0]])
-        matched_ref_positions.append(reference_positions[min_dist_idx[1]])
-        dist_matrix[min_dist_idx[0], :] = 1024
-        dist_matrix[:, min_dist_idx[1]] = 1024
+    while (dist_matrix!=-1).any():
+        max_dist_idx = np.unravel_index(np.argmax(dist_matrix), dist_matrix.shape)
+        matched_pred_positions.append(prediction_positions[max_dist_idx[0]])
+        matched_ref_positions.append(reference_positions[max_dist_idx[1]])
+        dist_matrix[max_dist_idx[0], :] = -1
+        dist_matrix[:, max_dist_idx[1]] = -1
     return matched_pred_positions, matched_ref_positions
 
 def match_labels_idx(pred_labels, ref_labels, bert_threshold=None):
@@ -149,7 +180,7 @@ def compute_distance(positions_pre, positions_ref):
     distance = 0
     for pos_pre, pos_ref in zip(positions_pre, positions_ref):
         distance += abs(pos_pre[0] - pos_ref[0]) + abs(pos_pre[1] - pos_ref[1])
-    distance /= len(positions_pre)
+    distance = distance / len(positions_pre) if len(positions_pre) != 0 else 0
     return distance
 
 # Compute the iou between the positions
@@ -170,9 +201,21 @@ def compute_iou(positions_pre, positions_ref):
             iou += 0
         else:
             iou += intersection / union
-    iou /= len(positions_pre)
+    iou = iou / len(positions_pre) if len(positions_pre) != 0 else 0
     return iou, unions, intersections
 
+def compute_iou_single(pos_pre, pos_ref):
+    inter_left = max(pos_pre[0], pos_ref[0])
+    inter_right = min(pos_pre[1], pos_ref[1])
+    intersection = max(0, inter_right - inter_left + 1)
+    union_left = min(pos_pre[0], pos_ref[0])
+    union_right = max(pos_pre[1], pos_ref[1])
+    union = union_right - union_left + 1
+    if union == 0:
+        iou = 0
+    else:
+        iou = intersection / union
+    return iou
 # Compute the recall between the positions
 def compute_recall(positions_pre, positions_ref, iou_threshold):
     recall = 0
@@ -295,7 +338,7 @@ def evaluate_group_grounding(args: Dict[str, Any]) -> Dict[str, Any]:
         unions_samples.append(unions_target)
         intersections_samples.append(intersections_target)
         matched_positions_num.append(TP_nums)
-        distances_samples.append(distances_target/len(matched_pred_positions))
+        distances_samples.append(distances_target/len(matched_pred_positions) if len(matched_pred_positions) != 0 else 0)
     # 计算指标
     # iou指标
     avg_iou = sum(iou_samples) / len(iou_samples)

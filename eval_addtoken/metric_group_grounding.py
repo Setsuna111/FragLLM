@@ -123,21 +123,36 @@ def match_positions(prediction_positions, reference_positions):
     matched_pred_positions = []
     matched_ref_positions = []
     # 计算区间中心点
-    pred_centers = [(a[0] + a[1]) / 2.0 for a in prediction_positions]
-    ref_centers = [(b[0] + b[1]) / 2.0 for b in reference_positions]
-    dist_matrix = np.zeros((len(pred_centers), len(ref_centers)))
-    for i, ac in enumerate(pred_centers):
-        for j, bc in enumerate(ref_centers):
-            dist_matrix[i, j] = abs(ac - bc)
+    # pred_centers = [(a[0] + a[1]) / 2.0 for a in prediction_positions]
+    # ref_centers = [(b[0] + b[1]) / 2.0 for b in reference_positions]
+    # dist_matrix = np.zeros((len(pred_centers), len(ref_centers)))
+    # for i, ac in enumerate(pred_centers):
+    #     for j, bc in enumerate(ref_centers):
+    #         dist_matrix[i, j] = abs(ac - bc)
+    # # Find one-to-one matches
+    # matched_pred_positions = []
+    # matched_ref_positions = []
+    # while (dist_matrix!=1024).any():
+    #     min_dist_idx = np.unravel_index(np.argmin(dist_matrix), dist_matrix.shape)
+    #     matched_pred_positions.append(prediction_positions[min_dist_idx[0]])
+    #     matched_ref_positions.append(reference_positions[min_dist_idx[1]])
+    #     dist_matrix[min_dist_idx[0], :] = 1024
+    #     dist_matrix[:, min_dist_idx[1]] = 1024
+
+    # iou矩阵
+    dist_matrix = np.zeros((len(prediction_positions), len(reference_positions)))
+    for i, pred_pos in enumerate(prediction_positions):
+        for j, ref_pos in enumerate(reference_positions):
+            dist_matrix[i, j] = compute_iou_single(pred_pos, ref_pos)
     # Find one-to-one matches
     matched_pred_positions = []
     matched_ref_positions = []
-    while (dist_matrix!=1024).any():
-        min_dist_idx = np.unravel_index(np.argmin(dist_matrix), dist_matrix.shape)
-        matched_pred_positions.append(prediction_positions[min_dist_idx[0]])
-        matched_ref_positions.append(reference_positions[min_dist_idx[1]])
-        dist_matrix[min_dist_idx[0], :] = 1024
-        dist_matrix[:, min_dist_idx[1]] = 1024
+    while (dist_matrix!=-1).any():
+        max_dist_idx = np.unravel_index(np.argmax(dist_matrix), dist_matrix.shape)
+        matched_pred_positions.append(prediction_positions[max_dist_idx[0]])
+        matched_ref_positions.append(reference_positions[max_dist_idx[1]])
+        dist_matrix[max_dist_idx[0], :] = -1
+        dist_matrix[:, max_dist_idx[1]] = -1
     return matched_pred_positions, matched_ref_positions
 
 def match_labels_idx(pred_labels, ref_labels, bert_threshold=None):
@@ -189,6 +204,18 @@ def compute_iou(positions_pre, positions_ref):
     iou = iou / len(positions_pre) if len(positions_pre) != 0 else 0
     return iou, unions, intersections
 
+def compute_iou_single(pos_pre, pos_ref):
+    inter_left = max(pos_pre[0], pos_ref[0])
+    inter_right = min(pos_pre[1], pos_ref[1])
+    intersection = max(0, inter_right - inter_left + 1)
+    union_left = min(pos_pre[0], pos_ref[0])
+    union_right = max(pos_pre[1], pos_ref[1])
+    union = union_right - union_left + 1
+    if union == 0:
+        iou = 0
+    else:
+        iou = intersection / union
+    return iou
 # Compute the recall between the positions
 def compute_recall(positions_pre, positions_ref, iou_threshold):
     recall = 0
