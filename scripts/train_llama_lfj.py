@@ -108,6 +108,7 @@ class FragModelArguments:
 class FragDataArguments:
     """Data arguments for fragment training."""
     root_dir: Optional[str] = field(default="./data", metadata={"help": "Root directory for datasets"})
+    use_detailed_template: Optional[bool] = field(default=False, metadata={"help": "Whether to use detailed template"})
     dataset_train_config: Optional[str] = field(default="MotifRefDesc||ActRefDesc||BindIRefDesc||DomRefDesc||EvoRefDesc", metadata={"help": "Dataset config for training"})
     sample_rate_train: Optional[str] = field(default="1,1,1,1,1", metadata={"help": "Sample rate for training"})
     dataset_valid_config: Optional[str] = field(default=None, metadata={"help": "Dataset config for evaluation"})

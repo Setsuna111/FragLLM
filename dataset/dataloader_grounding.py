@@ -189,7 +189,9 @@ class FragGroundingSingle(FragRefDataset):
                     position += " and "
             position = f"{self.phrase_start_placeholder}{answer}:{position}{self.phrase_end_placeholder}"
             answer = answer_template.format(class_name=answer, position=position)
-            
+        
+        # print(answer)
+
         return conversation, answer
 
     def sort_position(self, position_grd):
