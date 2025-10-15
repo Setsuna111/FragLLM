@@ -161,7 +161,7 @@ class FragGroundingSingle(FragRefDataset):
             for i, (start, end) in enumerate(position_grd[0]):
                 region_num = i + 1
                 position_placeholder = f"{self.position_placeholder}"
-                detailed_position = f"region {region_num} lies within {self.phrase_start_placeholder}{answer}:{position_placeholder}{self.phrase_end_placeholder}"
+                detailed_position = f"region {region_num} lies within {position_placeholder}"
                 detailed_positions.append(detailed_position)
             
             # Join with appropriate connectors
@@ -175,7 +175,7 @@ class FragGroundingSingle(FragRefDataset):
             answer = answer_template.format(
                 class_name=answer, 
                 region_count=region_count,
-                detailed_positions=detailed_positions_str
+                detailed_positions=f"{self.phrase_start_placeholder}{answer}:{detailed_positions_str}{self.phrase_end_placeholder}"
             )
         else:
             # Original template format
@@ -466,7 +466,7 @@ class FragGroundingGroup(FragRefDataset):
                 for i, (start, end) in enumerate(position_grd[j]):
                     region_num = i + 1
                     position_placeholder = f"{self.position_placeholder}"
-                    position_info = f"region {region_num} lies within {self.phrase_start_placeholder}{category_name}:{position_placeholder}{self.phrase_end_placeholder}"
+                    position_info = f"region {region_num} lies within {position_placeholder}"
                     positions_for_category.append(position_info)
                 
                 # Join positions with appropriate connectors
@@ -478,7 +478,8 @@ class FragGroundingGroup(FragRefDataset):
                     positions_str = ", ".join(positions_for_category[:-1]) + f", and {positions_for_category[-1]}"
                 
                 # Format: "CategoryName (X instances): position details"
-                category_detail = f"{category_name} ({instance_count} instance{'s' if instance_count > 1 else ''}): {positions_str}"
+                # category_detail = f"{category_name} ({instance_count} instance{'s' if instance_count > 1 else ''}): {positions_str}"
+                category_detail = f"{self.phrase_start_placeholder}{category_name}:{positions_str}{self.phrase_end_placeholder}"  # 1015 change as the whold info outside
                 category_details.append(category_detail)
             
             # Join all categories
@@ -509,6 +510,8 @@ class FragGroundingGroup(FragRefDataset):
                     answer_i += " and "      
             answer = answer_template.format(task_name=self.task_name_map[self.data_name], contents=answer_i)
         
+        # print(answer)
+
         return conversation, answer
 
     def sort_position(self, position_grd):

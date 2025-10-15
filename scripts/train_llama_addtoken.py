@@ -12,7 +12,7 @@ sys.path.append("..")
 sys.path.append(".")
 
 import os
-# os.environ["CUDA_VISIBLE_DEVICES"] = "7"
+# os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 import pathlib
 import transformers
@@ -56,7 +56,7 @@ class FragModelArguments:
     
     # Grounding model arguments
     grounding_model_type: Optional[str] = field(default="cls", metadata={"help": "Type of grounding model to use: 'cls' for classification model, 'seg' for segmentation model"})
-    protein_sam_checkpoint_path: Optional[str] = field(default=None, metadata={"help": "Custom path to ProteinSAM checkpoint. If not provided, default paths based on grounding_model_type will be used"})
+    protein_sam_checkpoint_path: Optional[str] = field(default="/home/lfj/projects_dir/FragLLM/model_grounding_cls/checkpoints_grounding/best_model.pt", metadata={"help": "Custom path to ProteinSAM checkpoint. If not provided, default paths based on grounding_model_type will be used"})
     
     # Model architecture arguments
     fix_modality_adapter: Optional[bool] = field(default=False, metadata={"help": "Whether to fix modality adapter"})

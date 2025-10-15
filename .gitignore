@@ -7,7 +7,7 @@ eval/cache/
 results/
 scripts/run_training_llama_lfj_*.sh
 scripts/*bug.sh
-scripts/*_lfj_*.sh
+scripts/*_lfj*.sh
 scripts_legacy/
 test_lfj.ipynb
 merge_*_lfj.py
