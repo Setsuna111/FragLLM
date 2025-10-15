@@ -1,6 +1,12 @@
-import sys
-sys.path.append(".")
+# BLAST-based protein fragment localization, as the comparison baseline for protein grounding tasks
+
 import os
+import sys
+
+# Add project root to path for datasets
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, project_root)
+
 import subprocess
 import pandas as pd
 import argparse
@@ -11,7 +17,7 @@ from collections import defaultdict
 
 def load_venusx_dataset(dataset_name, split):
     """Load VenusX dataset from JSON file"""
-    dataset_path = f"data/VenusX_{dataset_name}/{split}.json"
+    dataset_path = os.path.join(project_root, "data", f"VenusX_{dataset_name}", f"{split}.json")
     if not os.path.exists(dataset_path):
         raise FileNotFoundError(f"Dataset file not found: {dataset_path}")
     
@@ -155,33 +161,25 @@ def predict_fragment_locations(test_protein_sequence, fragment_sequences,
     if not fragment_sequences:
         return []
     
-    # Create temporary database for the target protein
+    # Create temporary database with fragment sequences (more efficient)
     with tempfile.TemporaryDirectory() as temp_dir:
-        db_path = os.path.join(temp_dir, "target_protein")
+        db_path = os.path.join(temp_dir, "fragment_database")
         
-        # Create database with target protein
-        create_blast_database([("target_protein", test_protein_sequence)], db_path)
+        # Create database with fragment sequences
+        fragment_db_sequences = [(f"frag_{i}", seq) for i, seq in enumerate(fragment_sequences)]
+        create_blast_database(fragment_db_sequences, db_path)
         
-        # Run BLAST with fragment sequences as queries
-        query_sequences = [(f"frag_{i}", seq) for i, seq in enumerate(fragment_sequences)]
-        # blast_results = run_blastp_alignment(query_sequences, db_path, evalue_threshold=evalue_threshold*100)
+        # Run BLAST with target protein as query
+        query_sequences = [("target_protein", test_protein_sequence)]
         blast_results = run_blastp_alignment(query_sequences, db_path, evalue_threshold=evalue_threshold)
     
     # Filter and process results
     predicted_ranges = []
     for result in blast_results:
-        # Apply thresholds
-        # if (result['pident'] >= identity_threshold and 
-            # result['evalue'] <= evalue_threshold):
         if (result['evalue'] <= evalue_threshold):
-            
-            # Check coverage threshold (Optional)
-            # query_coverage = result['length'] / len(fragment_sequences[int(result['query_id'].split('_')[1])])
-            # if query_coverage >= coverage_threshold:
-            #     # Add predicted range (convert to 0-based indexing)
-            #     predicted_ranges.append((result['sstart'] - 1, result['send']))
-
-            predicted_ranges.append((result['sstart'] - 1, result['send']))
+            # Note: qstart/qend refer to positions in target protein (query)
+            # sstart/send refer to positions in fragment (subject/database)
+            predicted_ranges.append((result['qstart'] - 1, result['qend']))
 
     # Merge overlapping predictions
     merged_ranges = merge_overlapping_ranges(predicted_ranges)
@@ -310,7 +308,7 @@ def main():
     parser.add_argument("--task", type=str, default='single',
                        choices=['single', 'multiple', 'both'],
                        help="Task type: single localization, multiple localization, or both")
-    parser.add_argument("--output_dir", type=str, default="baselines/blast_cls_results",
+    parser.add_argument("--output_dir", type=str, default=os.path.join(project_root, "baselines", "blast_cls_results"),
                        help="Output directory for results")
     # parser.add_argument("--identity_threshold", type=float, default=50.0,
     #                    help="Minimum identity percentage for BLAST hits")
@@ -346,7 +344,6 @@ def main():
         print(f"  - {category}: {len(fragments)} fragments")
     
     # Process tasks
-    all_results = []
     
     if args.task in ['single', 'both']:
         print("[3a] Processing single localization task...")
@@ -355,7 +352,6 @@ def main():
             identity_threshold=args.identity_threshold,
             evalue_threshold=args.evalue_threshold
         )
-        all_results.extend(single_results)
         
         # Save single localization results
         single_csv_path = os.path.join(dataset_out_dir, "single_localization_results.csv")
@@ -368,16 +364,10 @@ def main():
             identity_threshold=args.identity_threshold,
             evalue_threshold=args.evalue_threshold
         )
-        all_results.extend(multiple_results)
         
         # Save multiple localization results
         multiple_csv_path = os.path.join(dataset_out_dir, "multiple_localization_results.csv")
         save_results_to_csv(multiple_results, multiple_csv_path)
-    
-    # # Save combined results
-    # if args.task == 'both':
-    #     combined_csv_path = os.path.join(dataset_out_dir, "combined_localization_results.csv")
-    #     save_results_to_csv(all_results, combined_csv_path)
     
     print(f"Results saved in: {dataset_out_dir}")
 

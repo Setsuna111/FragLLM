@@ -10,7 +10,8 @@
 # Model and data paths
 MODEL_PATH="/home/lfj/projects_dir/FragLLM/checkpoints/grounding_lora_only_act_trainable_iousam_merge_addtoken/"
 ROOT_DIR="./data"
-RESULTS_DIR="./eval_results/single_grounding/grounding_lora_0918_trainable_iousam"
+RESULTS_DIR="./eval_results"
+MODEL_IDENTIFIER="grounding_lora_0918_trainable_iousam"  # Identifier for this model configuration
 
 # Evaluation parameters
 SPLIT="test"
@@ -77,6 +78,7 @@ if [ "$USE_SINGLE_GPU" = true ]; then
         --split "$SPLIT" \
         --batch_per_device "$BATCH_PER_DEVICE" \
         --save_results_dir "$RESULTS_DIR" \
+        --model_identifier "$MODEL_IDENTIFIER" \
         --temperature "$TEMPERATURE" \
         --single_gpu \
         --gpu_id "$SINGLE_GPU_ID" \
@@ -98,6 +100,7 @@ else
         --split "$SPLIT" \
         --batch_per_device "$BATCH_PER_DEVICE" \
         --save_results_dir "$RESULTS_DIR" \
+        --model_identifier "$MODEL_IDENTIFIER" \
         --temperature "$TEMPERATURE" \
         $([ "$USE_DETAILED_TEMPLATE" = true ] && echo "--use_detailed_template")
 fi
@@ -107,6 +110,12 @@ echo "Evaluation completed!"
 echo "Results saved in: $RESULTS_DIR"
 echo "Check the following files for results:"
 for dataset in $(echo "$DATASETS" | tr ',' ' '); do
-    echo "  - $RESULTS_DIR/${dataset}_results.csv"
+    if [[ "$dataset" == *"GroundSingle" ]]; then
+        echo "  - $RESULTS_DIR/grounding_single/$MODEL_IDENTIFIER/${dataset}_results.csv"
+    elif [[ "$dataset" == *"GroundGroup" ]]; then
+        echo "  - $RESULTS_DIR/grounding_group/$MODEL_IDENTIFIER/${dataset}_results.csv"
+    else
+        echo "  - $RESULTS_DIR/${dataset}_results.csv"
+    fi
 done
 echo "========================================="

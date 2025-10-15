@@ -10,7 +10,8 @@
 # Model and data paths
 MODEL_PATH="./checkpoints/fragment_training_only_stage2_bw_stage1_lora32_epoch10_0901_merge"
 ROOT_DIR="./data"
-RESULTS_DIR="./eval_results/group_grounding/fragment_training_only_stage2_bw_stage1_lora32_epoch10_0901_merge"
+RESULTS_DIR="./eval_results"
+MODEL_IDENTIFIER="fragment_training_only_stage2_bw_stage1_lora32_epoch10_0901_merge"  # Identifier for this model configuration
 
 # Evaluation parameters
 SPLIT="test"
@@ -66,13 +67,14 @@ if [ "$USE_SINGLE_GPU" = true ]; then
     echo "========================================="
     
     # Single GPU execution
-    python eval_local/evaluate_grounding.py \
+    python eval/evaluate_grounding.py \
         --model_path "$MODEL_PATH" \
         --root_dir "$ROOT_DIR" \
         --datasets "$DATASETS" \
         --split "$SPLIT" \
         --batch_per_device "$BATCH_PER_DEVICE" \
         --save_results_dir "$RESULTS_DIR" \
+        --model_identifier "$MODEL_IDENTIFIER" \
         --temperature "$TEMPERATURE" \
         --single_gpu \
         --gpu_id "$SINGLE_GPU_ID"
@@ -86,13 +88,14 @@ else
         --nnodes=1 \
         --nproc_per_node="$NUM_GPUS" \
         --master_port="$MASTER_PORT" \
-        eval_local/evaluate_grounding.py \
+        eval/evaluate_grounding.py \
         --model_path "$MODEL_PATH" \
         --root_dir "$ROOT_DIR" \
         --datasets "$DATASETS" \
         --split "$SPLIT" \
         --batch_per_device "$BATCH_PER_DEVICE" \
         --save_results_dir "$RESULTS_DIR" \
+        --model_identifier "$MODEL_IDENTIFIER" \
         --temperature "$TEMPERATURE"
 fi
 
@@ -101,6 +104,12 @@ echo "Evaluation completed!"
 echo "Results saved in: $RESULTS_DIR"
 echo "Check the following files for results:"
 for dataset in $(echo "$DATASETS" | tr ',' ' '); do
-    echo "  - $RESULTS_DIR/${dataset}_results.csv"
+    if [[ "$dataset" == *"GroundSingle" ]]; then
+        echo "  - $RESULTS_DIR/grounding_single/$MODEL_IDENTIFIER/${dataset}_results.csv"
+    elif [[ "$dataset" == *"GroundGroup" ]]; then
+        echo "  - $RESULTS_DIR/grounding_group/$MODEL_IDENTIFIER/${dataset}_results.csv"
+    else
+        echo "  - $RESULTS_DIR/${dataset}_results.csv"
+    fi
 done
 echo "========================================="

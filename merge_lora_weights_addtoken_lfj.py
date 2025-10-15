@@ -116,7 +116,7 @@ def load_pretrained_model_fragllm_addtoken(model_path, model_base, model_name, l
         tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False, pad_token='<|reserved_special_token_0|>')
         
         # For full model loading, special tokens should already be included
-        model =ProteinLlamaForCausalLM.from_pretrained(
+        model = ProteinLlamaForCausalLM.from_pretrained(
             model_path,
             low_cpu_mem_usage=True,
             **kwargs
@@ -142,7 +142,7 @@ def get_model_name_from_path(model_path):
 def merge_lora_addtoken(args):
     model_name = get_model_name_from_path(args.model_path)
     tokenizer, model, esm_encoder = load_pretrained_model_fragllm_addtoken(args.model_path, args.model_base, model_name, device_map='cpu')
-
+    
     # Save the merged model and tokenizer (with expanded vocabulary)
     model.save_pretrained(args.save_model_path)
     tokenizer.save_pretrained(args.save_model_path)

@@ -1,3 +1,27 @@
+1002 lfj 主要是休整优化代码
+1. 修改baselines/blast_cls.py中查询方式，改为长序列为查询序列，短序列为数据库序列，加一下速
+2. 删除了sample_rate这一个参数
+3. 新增参数dataset_size，用以控制ProFunc dataset是否进行截断
+4. 修改grounding任务的detailed_template的加载方式，不需要传入template这个参数了，此外，统一两个版本的template，最终以xx为准
+5. 修改eval下文件格式，evaluate为首的文件作用为【得到并保存模型输出】，metric为首的文件作用为【根据模型输出计算指标】
+6. 统一eval中ref任务和grounding的存储路径，现在是：
+    ./eval
+     --profunc
+        --model_name_with_results_inside
+     --referring_clsx
+     --referring_desc
+     --grounding_single
+     --grounding_group
+7. grounding decoder: 支持一键切换是分类还是分割训练得到的模型，支持传参设置读入哪一个预训练参数，支持保存预训练时的args，从而主模型在实例化时一键读入。
+
+0922 lfj
+1. 新增允许grounding模型的分类头参数可训练设置
+2. 新增detailed_template，支持single和group两类训练任务
+
+0918 lfj
+1. 新增定位任务中相关baseline，详见baselines/blast_cls.py及sh，可调参数主要为evalue
+2. 新增两个grounding任务的预训练模型，独立于两个文件夹中
+
 0911 lfj
 New features
 1. train_llama_lfj.py中新增loss检测代码，检测过大以及nan，追溯对应数据
@@ -7,16 +31,9 @@ New features
     alignment-based methods: blasy, tm-align, foldseek。
     sequence-based methods：plm.py支持huggingface model card的各种语言模型
     seq&struct-based models：saprot，单独涉及到结构token的转化
-5. 新增两个ground训练模型，由于懒得写loss切换，直接复制了一份，反正最后只选一个，这部分注释先不写了，先push上去该整体model
-6. 更新ground模型可训练
-7. 新增detailed_template
-
-Bug fix
-1. 修正ActRefDesc对data_name的定义
-2. 修改zero2.json，避免过大grad_norm直接导致nan
-
-Others
-1. dataset/dataloader_frag.py存在一些随机数bug的古战场遗迹，注意这些注释不要传到main，包括此条
+5. 修正ActRefDesc对data_name的定义
+6. 修改zero2.json，避免过大grad_norm直接导致nan
+7. dataset/dataloader_frag.py存在一些随机数bug的古战场遗迹，注意这些注释不要传到main
 
 0910 djy
 1. scripts/zero2.json中设置overlap_comm==false，避免训练过程中gradnorm出现nan

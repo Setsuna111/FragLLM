@@ -10,7 +10,8 @@
 # Model and data paths
 MODEL_PATH="/home/lfj/projects_dir/FragLLM/checkpoints/test_load_stage1_lora_0915_multi_scale_final_data_wo_domain_merge/"
 ROOT_DIR="./data"
-RESULTS_DIR="./results/results_reference_0917"  # Directory to save evaluation results
+RESULTS_DIR="./eval_results"
+MODEL_IDENTIFIER="test_load_stage1_lora_0915_multi_scale_final_data_wo_domain_merge"  # Identifier for this model configuration
 
 # Evaluation parameters
 SPLIT="test"
@@ -74,6 +75,7 @@ if [ "$USE_SINGLE_GPU" = true ]; then
         --split "$SPLIT" \
         --batch_per_device "$BATCH_PER_DEVICE" \
         --save_results_dir "$RESULTS_DIR" \
+        --model_identifier "$MODEL_IDENTIFIER" \
         --temperature "$TEMPERATURE" \
         --single_gpu \
         --gpu_id "$SINGLE_GPU_ID"
@@ -94,6 +96,7 @@ else
         --split "$SPLIT" \
         --batch_per_device "$BATCH_PER_DEVICE" \
         --save_results_dir "$RESULTS_DIR" \
+        --model_identifier "$MODEL_IDENTIFIER" \
         --temperature "$TEMPERATURE"
 fi
 
@@ -102,6 +105,14 @@ echo "Evaluation completed!"
 echo "Results saved in: $RESULTS_DIR"
 echo "Check the following files for results:"
 for dataset in $(echo "$DATASETS" | tr ',' ' '); do
-    echo "  - $RESULTS_DIR/${dataset}_results.csv"
+    if [[ "$dataset" == "Pro2Text" ]]; then
+        echo "  - $RESULTS_DIR/profunc/$MODEL_IDENTIFIER/${dataset}_results.csv"
+    elif [[ "$dataset" == *"Class" ]]; then
+        echo "  - $RESULTS_DIR/referring_cls/$MODEL_IDENTIFIER/${dataset}_results.csv"
+    elif [[ "$dataset" == *"Desc" ]]; then
+        echo "  - $RESULTS_DIR/referring_desc/$MODEL_IDENTIFIER/${dataset}_results.csv"
+    else
+        echo "  - $RESULTS_DIR/${dataset}_results.csv"
+    fi
 done
 echo "========================================="

@@ -5,11 +5,50 @@ from torch import Tensor, nn
 from transformers.models.esm.modeling_esm import EsmModel
 import sys
 import os
+import json
 
-# Add model_grounding to path for ProteinSAM
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'model_grounding'))
-# sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'model_grounding_iou'))
+# Add model_grounding_cls to path for ProteinSAM by default
+# The grounding model type will be controlled by model arguments
+grounding_model_type = os.environ.get('GROUNDING_MODEL_TYPE', 'cls')  # 'cls' or 'seg'
+
+if grounding_model_type == 'seg':
+    sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'model_grounding_seg'))
+elif grounding_model_type == 'cls':
+    sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'model_grounding_cls'))
+
 from protein_sam import ProteinSAM
+
+
+def load_protein_sam_params_with_overrides(checkpoint_path: str) -> Dict[str, Any]:
+    """
+    Load ProteinSAM parameters from training and override special parameters for current use.
+    
+    Args:
+        checkpoint_path: Path to the ProteinSAM checkpoint (.pt file)
+        
+    Returns:
+        Dictionary of parameters with special parameters overridden
+    """
+    # Get the directory containing the checkpoint
+    checkpoint_dir = os.path.dirname(checkpoint_path)
+    params_file = os.path.join(checkpoint_dir, "protein_sam_init_params.json")
+    
+    if os.path.exists(params_file):
+        print(f"Loading ProteinSAM parameters from {params_file}")
+        with open(params_file, 'r') as f:
+            params = json.load(f)
+        
+        # Override special parameters for current use
+        params['use_category_cache'] = False  # Not using category cache
+        params['category_embeddings_path'] = None  # No category embeddings
+        params['use_external_embeddings'] = True  # Use external embeddings from LLM
+        params['device'] = 'cpu'  # Will be moved to correct device later
+        params['llama_model_path'] = None  # No LLaMA needed
+        
+        print(f"Loaded and updated ProteinSAM parameters")
+        return params
+    else:
+        raise FileNotFoundError(f"ProteinSAM parameters file not found at {params_file}")
 
 class FeedForwardNetwork(nn.Module):
     """General FFN module."""
@@ -190,19 +229,16 @@ class ProteinMetaModel:
             self.esm_encoder = EsmModel.from_pretrained(config.esm_path, add_pooling_layer=False)
             self.adapter = ModalityAdapter(config.protein_emb_dim, config.intermediate_dim, config.hidden_size, config.dropout_rate)
             self.fragment_adapter = FragmentAdapter(config.protein_emb_dim, config.hidden_size, config.perceiver_latent_size, config.num_perceiver_heads, config.num_perceiver_layers, config.dropout_rate)
-            self.protein_sam = ProteinSAM(
-                esm_model_path="/home/lfj/projects_dir/pretrained_model/esm2_t30_150M_UR50D/",
-                llama_model_path=None,  # No LLaMA needed
-                decoder_num_heads=8,
-                decoder_num_layers=2,
-                decoder_intermediate_size=512,
-                max_sequence_length=1021,
-                dropout_rate=0.1,
-                device='cpu',  # Will be moved to correct device later
-                use_category_cache=False,  # Not using category cache
-                category_embeddings_path=None,  # No category embeddings
-                use_external_embeddings=True  # Use external embeddings from LLM
-            )
+            
+            # Get ProteinSAM checkpoint path for loading parameters
+            proteinSAM_checkpoint_path = os.environ.get('PROTEIN_SAM_CHECKPOINT_PATH')
+            assert proteinSAM_checkpoint_path is not None, "Please set the PROTEIN_SAM_CHECKPOINT_PATH environment variable to the ProteinSAM checkpoint path."
+            proteinSAM_checkpoint_path = os.path.abspath(proteinSAM_checkpoint_path)
+            
+            # Load parameters with overrides
+            protein_sam_params = load_protein_sam_params_with_overrides(proteinSAM_checkpoint_path)
+            
+            self.protein_sam = ProteinSAM(**protein_sam_params)
     def get_esm_encoder(self):
         esm_encoder = getattr(self, "esm_encoder", None)
         if type(esm_encoder) is list:
@@ -235,30 +271,22 @@ class ProteinMetaModel:
         if getattr(self, "fragment_adapter", None) is None:
             self.fragment_adapter = FragmentAdapter(self.config.protein_emb_dim, self.config.hidden_size, self.config.perceiver_latent_size,self.config.num_perceiver_heads,self.config.num_perceiver_layers,self.config.dropout_rate)
         if getattr(self, "protein_sam", None) is None:
-            # Initialize ProteinSAM without LLaMA dependency (using external embeddings)
-            self.protein_sam = ProteinSAM(
-                esm_model_path="/home/lfj/projects_dir/pretrained_model/esm2_t30_150M_UR50D/",
-                llama_model_path=None,  # No LLaMA needed
-                decoder_num_heads=8,
-                decoder_num_layers=2,
-                decoder_intermediate_size=512,
-                max_sequence_length=1021,
-                dropout_rate=0.1,
-                device='cpu',  # Will be moved to correct device later
-                use_category_cache=False,  # Not using category cache
-                category_embeddings_path=None,  # No category embeddings
-                use_external_embeddings=True  # Use external embeddings from LLM
-            )
+            # Get ProteinSAM checkpoint path for loading parameters
+            proteinSAM_checkpoint_path = os.environ.get('PROTEIN_SAM_CHECKPOINT_PATH')
+            assert proteinSAM_checkpoint_path is not None, "Please set the PROTEIN_SAM_CHECKPOINT_PATH environment variable to the ProteinSAM checkpoint path."
             
-            # Load pretrained ProteinSAM weights
-            proteinSAM_checkpoint_path = os.path.join(os.path.dirname(__file__), '..', 'model_grounding', 'checkpoints_grounding', 'best_model.pt')
-            # proteinSAM_checkpoint_path = os.path.join(os.path.dirname(__file__), '..', 'model_grounding_iou', 'checkpoints_grounding_0916', 'best_model.pt')
             proteinSAM_checkpoint_path = os.path.abspath(proteinSAM_checkpoint_path)
             
-            assert os.path.exists(proteinSAM_checkpoint_path), f"ProteinSAM checkpoint not found at {proteinSAM_checkpoint_path}"
+            # Load parameters with overrides
+            protein_sam_params = load_protein_sam_params_with_overrides(proteinSAM_checkpoint_path)
+            
+            # Initialize ProteinSAM with loaded parameters
+            self.protein_sam = ProteinSAM(**protein_sam_params)
+            
+            # Load pretrained ProteinSAM weights
             print(f"Loading ProteinSAM pretrained weights from {proteinSAM_checkpoint_path}")
             self.protein_sam.load_model(proteinSAM_checkpoint_path)
-
+            
             # Only freeze the ESM encoder in ProteinSAM, allow other parts to be trainable
             if hasattr(self.protein_sam, 'esm_model') and self.protein_sam.esm_model is not None:
                 for param in self.protein_sam.esm_model.parameters():

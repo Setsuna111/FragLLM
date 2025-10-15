@@ -1,6 +1,9 @@
-import sys
-sys.path.append(".")
 import os
+import sys
+
+# Add project root to path for imports
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, project_root)
 import pandas as pd
 import argparse
 import json
@@ -14,7 +17,7 @@ warnings.filterwarnings('ignore')
 
 def load_venusx_dataset(dataset_name, split):
     """Load VenusX dataset from JSON file"""
-    dataset_path = f"data/VenusX_{dataset_name}/{split}.json"
+    dataset_path = os.path.join(project_root, "data", f"VenusX_{dataset_name}", f"{split}.json")
     if not os.path.exists(dataset_path):
         raise FileNotFoundError(f"Dataset file not found: {dataset_path}")
     
@@ -442,7 +445,7 @@ if __name__ == "__main__":
                        help="Path to SaProt model")
     parser.add_argument("--batch_size", type=int, default=16, 
                        help="Batch size for encoding sequences")
-    parser.add_argument("--out_dir", type=str, default="baselines/saprot_results", 
+    parser.add_argument("--out_dir", type=str, default=os.path.join(project_root, "baselines", "saprot_results"), 
                        help="Output directory")
     parser.add_argument("--cpu", action="store_true", 
                        help="Force CPU usage (default: use CUDA if available)")

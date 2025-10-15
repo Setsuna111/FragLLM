@@ -69,22 +69,20 @@ Example of usage:
 """
 
 
-from typing import Dict, List, Literal, Optional, Union
+from typing import Dict, List, Literal, Optional
 
 import torch
 import torch.utils.data
-# import torch_geometric.loader.dataloader
 from transformers import PreTrainedTokenizer
-from .dataloader_refferring import *
+from .dataloader_referring import *
 from .dataloader_grounding import *
 from .dataloader_function import *
 from transformers import AutoTokenizer
-from torch.utils.data import ConcatDataset
-import copy
-import numpy as np
 from dataclasses import dataclass, field
 from .templates import *
 import bisect
+
+
 class FragDataCollator:
     def __init__(self, 
             sequence_tokenizer: PreTrainedTokenizer,
@@ -204,12 +202,10 @@ class FragDataCollator:
         
 
 # Hybrid Dataset
-
 class HybridDatasetBase(torch.utils.data.Dataset):
     def __init__(self, 
             root_dir: str, 
             data_list: List[str], 
-            sample_rate: str,
             split: str, 
             max_sequence_length: Optional[int] = 1021, 
             epoch_samples: Optional[int] = None,
@@ -250,10 +246,6 @@ class HybridDatasetBase(torch.utils.data.Dataset):
         self.dataset_list = []
         self.split = split
         self.all_datasets = self.create_datasets()
-        self.sample_rate = np.array([float(x) for x in sample_rate.split(",")]) if sample_rate is not None else np.array([1] * len(self.dataset_list))
-
-        self.sample_rate = self.sample_rate.astype(np.float64)
-        self.sample_rate /= self.sample_rate.sum()
         self.epoch_samples = epoch_samples if epoch_samples is not None else sum(len(item) for item in self.all_datasets)
         self.cumulative_sizes = self.cumsum(self.all_datasets)
 
@@ -292,12 +284,6 @@ class HybridDatasetBase(torch.utils.data.Dataset):
     def __len__(self):
         return self.cumulative_sizes[-1]
     
-    # def __getitem__(self, idx):
-    #     dataset_idx = np.random.choice(len(self.dataset_list), p=self.sample_rate)
-    #     selected_dataset = self.all_datasets[dataset_idx]
-    #     index = np.random.choice(len(selected_dataset))
-    #     data = selected_dataset[index]
-    #     return data
     def __getitem__(self, idx):
         if idx < 0:
             if -idx > len(self):
@@ -313,108 +299,19 @@ class HybridDatasetBase(torch.utils.data.Dataset):
         return self.all_datasets[dataset_idx][sample_idx]
     
 
-class HybridReferringDataset(HybridDatasetBase):
-    def __init__(self, 
-            root_dir: str, 
-            data_reffring: str, 
-            sample_rate_referring: str,
-            split: str, 
-            max_sequence_length: Optional[int] = 1021, 
-            epoch_samples_referring: Optional[int] = None,
-            **kwargs,
-            ):
-        data_list = data_reffring.split("||")
-        sample_rate = sample_rate_referring
-        super().__init__(
-            root_dir=root_dir, 
-            data_list=data_list, 
-            sample_rate=sample_rate, 
-            split=split, 
-            max_sequence_length=max_sequence_length, 
-            epoch_samples=epoch_samples_referring, 
-            **kwargs,
-            )
-class HybridGroundingDataset(HybridDatasetBase):
-    def __init__(self, 
-            root_dir: str, 
-            data_grounding: str, 
-            sample_rate_grounding: str,
-            split: str, 
-            max_sequence_length: Optional[int] = 1021, 
-            epoch_samples_grounding: Optional[int] = None,
-            **kwargs,
-            ):
-        data_list = data_grounding.split("||")
-        sample_rate = sample_rate_grounding
-        super().__init__(
-            root_dir=root_dir, 
-            data_list=data_list, 
-            sample_rate=sample_rate, 
-            split=split, 
-            max_sequence_length=max_sequence_length, 
-            epoch_samples=epoch_samples_grounding, 
-            **kwargs,
-            )
-class HybridFunctionDataset(HybridDatasetBase):
-    def __init__(self, 
-            root_dir: str, 
-            data_function: str, 
-            sample_rate_function: str,
-            split: str, 
-            max_sequence_length: Optional[int] = 1021, 
-            epoch_samples_function: Optional[int] = None,
-            **kwargs,
-            ):
-        data_list = data_function.split("||")
-        sample_rate = sample_rate_function
-        super().__init__(
-            root_dir=root_dir, 
-            data_list=data_list, 
-            sample_rate=sample_rate, 
-            split=split, 
-            max_sequence_length=max_sequence_length, 
-            epoch_samples=epoch_samples_function, 
-            **kwargs,
-            )
-
-
-
-class ConcatDataset(ConcatDataset):
-    def __init__(self, datasets):
-        super().__init__(datasets)
-
-    def collater(self, samples):
-
-        all_keys = set()
-        for s in samples:
-            all_keys.update(s)
-        shared_keys = all_keys
-        for s in samples:
-            shared_keys = shared_keys & set(s.keys())
-        samples_shared_keys = []
-        for s in samples:
-            samples_shared_keys.append({k: s[k] for k in s.keys() if k in shared_keys})
-
-        return self.datasets[0].collater(samples_shared_keys)
-
-
-
 class HybridTrainDataset(HybridDatasetBase):
     def __init__(self, 
             root_dir: str, 
             data_train: str, 
-            sample_rate_train: str, 
             split: str, 
             max_sequence_length: Optional[int] = 1021, 
             epoch_samples: Optional[int] = None,
             **kwargs,
             ):
         data_list = data_train.split("||")
-        sample_rate = sample_rate_train
         super().__init__(
             root_dir=root_dir, 
             data_list=data_list, 
-            sample_rate=sample_rate, 
             split=split, 
             max_sequence_length=max_sequence_length, 
             epoch_samples=epoch_samples, 
@@ -425,113 +322,26 @@ class HybridValidDataset(HybridDatasetBase):
     def __init__(self, 
             root_dir: str, 
             data_valid: str, 
-            sample_rate_valid: str, 
             split: str, 
             max_sequence_length: Optional[int] = 1021, 
             epoch_samples: Optional[int] = None,
             **kwargs,
             ):
         data_list = data_valid.split("||")
-        sample_rate = sample_rate_valid
         super().__init__(
             root_dir=root_dir, 
             data_list=data_list, 
-            sample_rate=sample_rate, 
             split=split, 
             max_sequence_length=max_sequence_length, 
             epoch_samples=epoch_samples, 
             **kwargs,
             )
 
-
-
-def build_frag_dataset(
-        dataset_config: Union[str, List[str]],
-        data_args: Dict=None,
-        data_split: str="train",
-        **kwargs,
-        ):
-    if isinstance(dataset_config, list):
-        datasets = []
-        for cfg in dataset_config:
-            temp_dataset = build_frag_dataset(cfg, data_args=data_args, data_split=data_split, **kwargs)
-            datasets.append(temp_dataset)
-        for dataset in datasets:
-            print(type(dataset), f'len = {len(dataset)}')
-        return ConcatDataset(datasets)
-    dataset_type = dataset_config
-    params_dict = copy.deepcopy(data_args.__dict__)
-    params_dict["split"] = data_split
-    if dataset_type == "ProFunction":  # protein function
-        dataset = FunctionDataset(**params_dict, data_name="Pro2Text", task_type="function",question_template=ProteinFunction, answer_template=None)
-    elif dataset_type == "ActRefClass":  # protein referring class
-        dataset = ActRefClass(**params_dict)
-    elif dataset_type == "BindIRefClass": 
-        dataset = BindIRefClass(**params_dict)
-    elif dataset_type == "DomRefClass":
-        dataset = DomainRefClass(**params_dict)
-    elif dataset_type == "EvoRefClass":
-        dataset = EvoRefClass(**params_dict)
-    elif dataset_type == "MotifRefClass":
-        dataset = MotifRefClass(**params_dict)
-    elif dataset_type == "ActRefDesc":  # protein referring description
-        dataset = ActRefDesc(**params_dict)
-    elif dataset_type == "BindIRefDesc":
-        dataset = BindIRefDesc(**params_dict)
-    elif dataset_type == "DomRefDesc":
-        dataset = DomainRefDesc(**params_dict)
-    elif dataset_type == "EvoRefDesc":
-        dataset = EvoRefDesc(**params_dict)
-    elif dataset_type == "MotifRefDesc":
-        dataset = MotifRefDesc(**params_dict)
-    elif dataset_type == "ActGroundSingle":  # protein grounding single
-        dataset = ActGroundingSingle(**params_dict)
-    elif dataset_type == "BindIGroundSingle":
-        dataset = BindIGroundingSingle(**params_dict)
-    elif dataset_type == "DomGroundSingle":
-        dataset = DomainGroundingSingle(**params_dict)
-    elif dataset_type == "EvoGroundSingle":
-        dataset = EvoGroundingSingle(**params_dict)
-    elif dataset_type == "MotifGroundSingle":
-        dataset = MotifGroundingSingle(**params_dict)
-    elif dataset_type == "ActGroundGroup":  # protein grounding group
-        dataset = ActGroundingGroup(**params_dict)
-    elif dataset_type == "BindIGroundGroup":
-        dataset = BindIGroundingGroup(**params_dict)
-    elif dataset_type == "DomGroundGroup":
-        dataset = DomainGroundingGroup(**params_dict)
-    elif dataset_type == "EvoGroundGroup":
-        dataset = EvoGroundingGroup(**params_dict)
-    elif dataset_type == "MotifGroundGroup":
-        dataset = MotifGroundingGroup(**params_dict)
-    else:
-        raise NotImplementedError(f"Invalid dataset type: {dataset_type}")
-    return dataset
-
-"""Based on ConcatDataset"""
-# def make_multitask_dataset(data_args):
-#     dataset_configs_train = data_args.dataset_train_config.split("||")
-#     dataset_config_train = dataset_configs_train[0] if len(dataset_configs_train) == 1 else dataset_configs_train
-#     train_dataset = build_frag_dataset(dataset_config_train, data_args=data_args, data_split="train")
-#     data_collator = FragDataCollator(
-#         sequence_tokenizer=data_args.sequence_tokenizer,
-#         llm_tokenizer=data_args.llm_tokenizer,
-#         mode="train",
-#         max_sequence_length=data_args.max_sequence_length,
-#     )
-#     dataset_configs_eval = data_args.dataset_valid_config.split("||") if data_args.dataset_valid_config is not None else None
-#     eval_dataset = build_frag_dataset(dataset_configs_eval, data_args=data_args, data_split="valid") if dataset_configs_eval is not None else None
-
-#     return dict(train_dataset=train_dataset,
-#                 eval_dataset=eval_dataset,
-#                 data_collator=data_collator)
-
 """Based on HybridDatasetBase"""
 def make_multitask_dataset(data_args):
     train_dataset = HybridTrainDataset(
         root_dir=data_args.root_dir,
         data_train=data_args.dataset_train_config,
-        sample_rate_train=data_args.sample_rate_train,
         split="train",
         max_sequence_length=data_args.max_sequence_length,
         perceiver_latent_size=data_args.perceiver_latent_size,
@@ -546,7 +356,6 @@ def make_multitask_dataset(data_args):
     eval_dataset = HybridValidDataset(
         root_dir=data_args.root_dir,
         data_valid=data_args.dataset_valid_config,
-        sample_rate_valid=data_args.sample_rate_valid,
         split="valid",
         max_sequence_length=data_args.max_sequence_length,
     ) if data_args.dataset_valid_config is not None else None
@@ -560,9 +369,7 @@ class FragDataArguments:
     """Data arguments for fragment training."""
     root_dir: Optional[str] = field(default="./data", metadata={"help": "Root directory for datasets"})
     dataset_train_config: Optional[str] = field(default="ProFunction||ActRefClass||BindIRefClass||DomRefClass||EvoRefClass||MotifRefClass", metadata={"help": "Dataset config for training"})
-    sample_rate_train: Optional[str] = field(default="1,1,1,1,1,1", metadata={"help": "Sample rate for training"})
     dataset_valid_config: Optional[str] = field(default="ProFunction", metadata={"help": "Dataset config for evaluation"})
-    sample_rate_valid: Optional[str] = field(default="1", metadata={"help": "Sample rate for evaluation"})
     sequence_tokenizer_path: Optional[str] = field(default="/home/djy/projects/Data/HF_models/esm2_t36_3B_UR50D", metadata={"help": "Sequence tokenizer"})
     llm_tokenizer_path: Optional[str] = field(default="/home/djy/projects/Data/HF_models/RedHatAI-Llama-3.1-8B-Instruct", metadata={"help": "LLM tokenizer"})
     max_sequence_length: Optional[int] = field(default=1021, metadata={"help": "Maximum sequence length"})
@@ -572,6 +379,7 @@ class FragDataArguments:
     pos_start_placeholder: Optional[str] = field(default="<|reserved_special_token_3|>", metadata={"help": "Position start placeholder"})
     pos_end_placeholder: Optional[str] = field(default="<|reserved_special_token_4|>", metadata={"help": "Position end placeholder"})
     system_message: Optional[str] = field(default="You are a scientific assistant specializing in protein sequence analysis. Based on protein sequence embeddings and other related information, please answer the relevant questions using professional language. ", metadata={"help": "System message"})
+    dataset_size: Optional[int] = field(default=-1, metadata={"help": "Dataset size for function dataset. -1 means use full dataset, otherwise truncate to this size"})
     def __repr__(self):
         # 获取 dataclass 默认字段
         fields = {field.name: getattr(self, field.name) for field in self.__dataclass_fields__.values()}

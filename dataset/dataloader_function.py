@@ -103,6 +103,7 @@ class FunctionDataset(torch.utils.data.Dataset):
             phrase_start_placeholder: str = '<p>',
             phrase_end_placeholder: str = '</p>',
             perceiver_latent_size: int = 1,
+            dataset_size: int = -1,  # -1 means use full dataset, otherwise truncate to this size
             **kwargs,
             ):
         super().__init__()
@@ -115,6 +116,7 @@ class FunctionDataset(torch.utils.data.Dataset):
         self.filter_sequence = filter_sequence
         self.sequence_placeholder = sequence_placeholder
         self.perceiver_latent_size = perceiver_latent_size
+        self.dataset_size = dataset_size
         # Generate multiple fragment placeholders based on latent size
         if perceiver_latent_size > 1:
             self.fragment_placeholder = fragment_placeholder * perceiver_latent_size
@@ -128,10 +130,14 @@ class FunctionDataset(torch.utils.data.Dataset):
         
         self.ann_file = pd.read_csv(os.path.join(self.root_dir, f"{self.data_name}/{self.split}.csv"))
     
-        # get only first 5000 samples for debugging
-        # print(len(self.ann_file))
-        # self.ann_file = self.ann_file.iloc[:10000]  # 0914 tiny dataset
-        # print(len(self.ann_file))
+        # Truncate dataset if dataset_size is specified and > 0
+        if self.dataset_size > 0:
+            print(f'\033[92m' + f"-----{self.data_name}-{self.task_type}-{self.split}: Truncating dataset from {len(self.ann_file)} to {self.dataset_size} samples----" + '\033[0m')
+            self.ann_file = self.ann_file.iloc[:self.dataset_size]
+        elif self.dataset_size == -1:
+            print(f'\033[92m' + f"-----{self.data_name}-{self.task_type}-{self.split}: Using full dataset with {len(self.ann_file)} samples----" + '\033[0m')
+        else:
+            print(f'\033[93m' + f"Warning: Invalid dataset_size {self.dataset_size}, using full dataset" + '\033[0m')
 
         self.data_infos = self._load_annotations(self.ann_file)
         if self.filter_sequence:

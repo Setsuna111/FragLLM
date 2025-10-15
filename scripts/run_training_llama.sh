@@ -14,7 +14,6 @@ deepspeed  --include "localhost:6,7" --master_port $MASTER_PORT  scripts/train_l
     --num_perceiver_layers 2 \
     --root_dir "./data" \
     --dataset_train_config "ProFunction||ActRefClass||BindIRefClass||DomRefClass||EvoRefClass||MotifRefClass||ActRefDesc||BindIRefDesc||DomRefDesc||EvoRefDesc||MotifRefDesc||ActGroundSingle||BindIGroundSingle||DomGroundSingle||EvoGroundSingle||MotifGroundSingle||ActGroundGroup||BindIGroundGroup||DomGroundGroup||EvoGroundGroup||MotifGroundGroup" \
-    --sample_rate_train "1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1" \
     --max_sequence_length 1021 \
     --filter_sequence False \
     --output_dir "./checkpoints/fragment_training_only_stage2_lora16_epoch1" \
@@ -52,6 +51,5 @@ deepspeed  --include "localhost:6,7" --master_port $MASTER_PORT  scripts/train_l
     --lora_target_modules "self_attn.q_proj,self_attn.k_proj,self_attn.v_proj,self_attn.o_proj,mlp.gate_proj,mlp.up_proj,mlp.down_proj" \
 
     # -dataset_valid_config "ActRefClass||BindIRefClass||DomRefClass||EvoRefClass||MotifRefClass" \
-    # --sample_rate_valid "1,1,1,1,1" \
     # --evaluation_strategy "steps" \
 

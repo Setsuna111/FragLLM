@@ -5,27 +5,23 @@ The script is designed for single-GPU computation.
 """
 
 import argparse
-import json
+import pandas as pd
 import os
 import re
 from typing import Any, Dict, List
-
+import json
 import evaluate
 from transformers import BertTokenizer, RobertaTokenizer
 import scripts.utils_argparse as utils_argparse
 
 
 argParser = argparse.ArgumentParser()
-
-argParser.add_argument("--read_generation_dir", type=str)
-argParser.add_argument("--read_file_identifier", type=str, help="Postfix identifier or timestamp to filter files.")
-
+argParser.add_argument("--results_path", type=str, help="path to save the generated description")
 argParser.add_argument("--evaluate_exact_match", type=utils_argparse.str2bool)
 argParser.add_argument("--evaluate_bleu", type=utils_argparse.str2bool)
 argParser.add_argument("--evaluate_rouge", type=utils_argparse.str2bool)
 argParser.add_argument("--evaluate_bert_score", type=utils_argparse.str2bool)
 argParser.add_argument("--verbose", type=utils_argparse.str2bool)
-
 
 def compute_exact_match(predictions: List[str], references: List[str]) -> float:
     """Compute exact match ratio allowing for case and punctuation differences."""
@@ -43,17 +39,17 @@ def compute_exact_match(predictions: List[str], references: List[str]) -> float:
 
 
 def compute_bleu2(predictions: List[str], references: List[str]) -> Dict[str, Any]:
-    bleu = evaluate.load("bleu")
+    bleu = evaluate.load("./eval/metrics/bleu")
     return bleu.compute(predictions=predictions, references=references, max_order=2)
 
 
 def compute_bleu4(predictions: List[str], references: List[str]) -> Dict[str, Any]: 
-    bleu = evaluate.load("bleu")
+    bleu = evaluate.load("./eval/metrics/bleu")
     return bleu.compute(predictions=predictions, references=references)
 
 
 def compute_rouge(predictions: List[str], references: List[str]) -> Dict[str, Any]: 
-    rouge = evaluate.load("rouge")
+    rouge = evaluate.load("./eval/metrics/rouge")
     return rouge.compute(predictions=predictions, references=references)
 
 
@@ -61,7 +57,7 @@ def compute_bert_score(predictions: List[str], references: List[str]) -> Dict[st
     """Compute BERT score on roberta-large and biobert-large respectively."""
     results: Dict[str, Dict[str, Any]] = {}
 
-    tokenizer = RobertaTokenizer.from_pretrained("FacebookAI/roberta-large")
+    tokenizer = RobertaTokenizer.from_pretrained("/home/djy/projects/Data/HF_models/roberta-large")
     retokenized_predictions = tokenizer(
         predictions, padding="max_length", truncation=True, max_length=495, return_tensors="pt"
     )["input_ids"]
@@ -71,8 +67,8 @@ def compute_bert_score(predictions: List[str], references: List[str]) -> Dict[st
     )["input_ids"]
     truncated_labels = tokenizer.batch_decode(retokenized_labels, skip_special_tokens=True)
 
-    bert = evaluate.load("bertscore")
-    roberta_results = bert.compute(predictions=truncated_predictions, references=truncated_labels, lang="en")
+    bert = evaluate.load("./eval/metrics/bertscore")
+    roberta_results = bert.compute(predictions=truncated_predictions, references=truncated_labels, model_type="/home/djy/projects/Data/HF_models/roberta-large", num_layers=17)
     results["roberta-large"] = {
         "precision": sum(roberta_results["precision"]) / len(roberta_results["precision"]), 
         "recall": sum(roberta_results["recall"]) / len(roberta_results["recall"]), 
@@ -80,7 +76,7 @@ def compute_bert_score(predictions: List[str], references: List[str]) -> Dict[st
     }
 
     # truncate sentences to fit max_position_embeddings=512 of biobert
-    tokenizer = BertTokenizer.from_pretrained("dmis-lab/biobert-large-cased-v1.1")
+    tokenizer = BertTokenizer.from_pretrained("/home/djy/projects/Data/HF_models/biobert-large-cased-v1.1")
     retokenized_predictions = tokenizer(
         predictions, padding="max_length", truncation=True, max_length=495, return_tensors="pt"
     )["input_ids"]
@@ -93,7 +89,7 @@ def compute_bert_score(predictions: List[str], references: List[str]) -> Dict[st
     biobert_results = bert.compute(
         predictions=truncated_predictions,
         references=truncated_labels,
-        model_type="dmis-lab/biobert-large-cased-v1.1",
+        model_type="/home/djy/projects/Data/HF_models/biobert-large-cased-v1.1",
         num_layers=24,
     )
     results["biobert-large"] = {
@@ -141,30 +137,19 @@ def compute_metrics(predictions: List[str], references: List[str], args: Dict[st
     return gathered_results
 
 
-def benchmark(args: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+def benchmark_csv(args: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     """
-    Evaluate generation results on JSON files produced by `generate_ddp.py`. 
-    1) Gather predictions and labels from JSON files. 
-    2) Compute metrics including BLEU, ROUGE and BERT scores and print results. 
+    Evaluate generation results. 
+    Compute metrics including BLEU, ROUGE and BERT scores and print results. 
     """
-    read_generation_paths = []
-    for file_name in os.listdir(args["read_generation_dir"]):
-        full_path = os.path.join(args["read_generation_dir"], file_name)
-        if os.path.isfile(full_path) and args["read_file_identifier"] in full_path:
-            read_generation_paths.append(full_path)
-
-    gathered_predictions = []
-    gathered_labels = []
-    for read_path in read_generation_paths:
-        with open(read_path, "r") as file: 
-            results = json.load(file)
-            local_predictions = [results[name]["pred"] for name in results.keys()]
-            local_labels = [results[name]["true"] for name in results.keys()]
-            gathered_predictions.extend(local_predictions)
-            gathered_labels.extend(local_labels)
-        print(f"Reading {read_path}")
-
-    return compute_metrics(predictions=gathered_predictions, references=gathered_labels, args=args)
+    res = pd.read_csv(args["results_path"]).drop_duplicates(subset=['dataset_idxs'])
+    predictions = res['generated'].tolist()
+    references = res['function'].tolist()
+    results = compute_metrics(predictions=predictions, references=references, args=args)
+    save_results_path = args["results_path"].replace(".csv", "_metrics.json")
+    with open(save_results_path, "w") as f:
+        json.dump(results, f)
+    return results
 
 
 if __name__ == "__main__": 
@@ -174,5 +159,5 @@ if __name__ == "__main__":
     for key, value in parsed_args.__dict__.items(): 
         print(f"{key}: {value}")
     print("####################")
-
-    benchmark(parsed_args.__dict__)
+    # evaluate csv results
+    benchmark_csv(parsed_args.__dict__)

@@ -36,6 +36,7 @@ def parse_args():
     parser.add_argument("--split", default="test", help="data split to use (train, test, eval)")
     parser.add_argument("--batch_per_device", type=int, default=2, help="batch size for each device")
     parser.add_argument("--save_results_dir", default="./eval_results", help="directory to save results")
+    parser.add_argument("--model_identifier", default="", help="identifier for the model to distinguish different configurations")
     parser.add_argument("--single_gpu", action="store_true", help="use single GPU mode instead of distributed")
     # parser.add_argument("--single_gpu", default=True, help="use single GPU mode instead of distributed")
     parser.add_argument("--gpu_id", type=int, default=7, help="GPU ID to use in single GPU mode")
@@ -256,7 +257,27 @@ def main():
     
     # Evaluate each dataset
     for dataset_name in dataset_list:
-        save_results_path = os.path.join(args.save_results_dir, f"{dataset_name}_results.csv")
+        # Determine subdirectory based on dataset type
+        if dataset_name.endswith('GroundSingle'):
+            subdir = "grounding_single"
+        elif dataset_name.endswith('GroundGroup'):
+            subdir = "grounding_group"
+        else:
+            subdir = ""  # fallback for other datasets
+        
+        # Create full results directory with model identifier
+        if subdir:
+            if args.model_identifier:
+                full_results_dir = os.path.join(args.save_results_dir, subdir, args.model_identifier)
+            else:
+                # Extract model identifier from model_path if not provided
+                model_identifier = os.path.basename(args.model_path.rstrip('/'))
+                full_results_dir = os.path.join(args.save_results_dir, subdir, model_identifier)
+            os.makedirs(full_results_dir, exist_ok=True)
+            save_results_path = os.path.join(full_results_dir, f"{dataset_name}_results.csv")
+        else:
+            save_results_path = os.path.join(args.save_results_dir, f"{dataset_name}_results.csv")
+        
         samples_count = evaluate_dataset(
             dataset_name, model, tokenizer, 
             data_collator, args, device, save_results_path

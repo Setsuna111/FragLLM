@@ -79,7 +79,7 @@ import torch.utils.data
 from transformers import PreTrainedTokenizer
 import os
 import json
-from .dataloader_refferring import FragRefDataset
+from .dataloader_referring import FragRefDataset
 from .templates import *
 
 # grounding single
@@ -368,6 +368,7 @@ class FragGroundingGroup(FragRefDataset):
             split: str,
             task_type: str,
             max_sequence_length: Optional[int] = 1021,
+            use_detailed_template: bool = False,
             **kwargs,
             ):
         super().__init__(
@@ -378,6 +379,7 @@ class FragGroundingGroup(FragRefDataset):
             max_sequence_length=max_sequence_length, 
             **kwargs,
             )
+        self.use_detailed_template = use_detailed_template
         self.data_infos = self._filter_grounding(self.data_infos)
 
     # 过滤掉所有片段最大位置和最小位置之差大于max_sequence_length的data
@@ -442,8 +444,8 @@ class FragGroundingGroup(FragRefDataset):
             question_template = random.choice(Frag_Ground_Group_Detailed)
             answer_template = random.choice(Grounding_Answer_Group_Detailed)
         else:
-            question_template = random.choice(self.question_template)
-            answer_template = random.choice(self.answer_template) if self.answer_template is not None else None
+            question_template = random.choice(Frag_Ground_Group)
+            answer_template = random.choice(Grounding_Answer_Group)
         
         conversation = [
             {"role": "system", "content": self.system_message},
@@ -563,20 +565,18 @@ class DomainGroundingGroup(FragGroundingGroup):
             root_dir: str, 
             split: str, 
             max_sequence_length: Optional[int] = 1021,
+            use_detailed_template: bool = False,
             **kwargs,
             ):
         data_name = "VenusX_Dom"
         task_type = "grounding_group"
-        question_template = Frag_Ground_Group
-        answer_template = Grounding_Answer_Group
         super().__init__(
             root_dir=root_dir, 
             data_name=data_name, 
             split=split, 
             task_type=task_type, 
             max_sequence_length=max_sequence_length,
-            question_template=question_template,
-            answer_template=answer_template,
+            use_detailed_template=use_detailed_template,
             **kwargs,
             )
 
@@ -586,20 +586,18 @@ class ActGroundingGroup(FragGroundingGroup):
             root_dir: str, 
             split: str, 
             max_sequence_length: Optional[int] = 1021,
+            use_detailed_template: bool = False,
             **kwargs,
             ):
         data_name = "VenusX_Act"
         task_type = "grounding_group"
-        question_template = Frag_Ground_Group
-        answer_template = Grounding_Answer_Group
         super().__init__(
             root_dir=root_dir, 
             data_name=data_name, 
             split=split, 
             task_type=task_type, 
             max_sequence_length=max_sequence_length,
-            question_template=question_template,
-            answer_template=answer_template,
+            use_detailed_template=use_detailed_template,
             **kwargs,
             )
 
@@ -609,20 +607,18 @@ class BindIGroundingGroup(FragGroundingGroup):
             root_dir: str, 
             split: str, 
             max_sequence_length: Optional[int] = 1021,
+            use_detailed_template: bool = False,
             **kwargs,
             ):
         data_name = "VenusX_BindI"
         task_type = "grounding_group"
-        question_template = Frag_Ground_Group
-        answer_template = Grounding_Answer_Group
         super().__init__(
             root_dir=root_dir, 
             data_name=data_name, 
             split=split, 
             task_type=task_type, 
             max_sequence_length=max_sequence_length,
-            question_template=question_template,
-            answer_template=answer_template,
+            use_detailed_template=use_detailed_template,
             **kwargs,
             )
 class MotifGroundingGroup(FragGroundingGroup):
@@ -631,20 +627,18 @@ class MotifGroundingGroup(FragGroundingGroup):
             root_dir: str, 
             split: str, 
             max_sequence_length: Optional[int] = 1021,
+            use_detailed_template: bool = False,
             **kwargs,
             ):
         data_name = "VenusX_Motif"
         task_type = "grounding_group"
-        question_template = Frag_Ground_Group
-        answer_template = Grounding_Answer_Group
         super().__init__(
             root_dir=root_dir, 
             data_name=data_name, 
             split=split, 
             task_type=task_type, 
             max_sequence_length=max_sequence_length,
-            question_template=question_template,
-            answer_template=answer_template,
+            use_detailed_template=use_detailed_template,
             **kwargs,
             )
 class EvoGroundingGroup(FragGroundingGroup):
@@ -653,20 +647,18 @@ class EvoGroundingGroup(FragGroundingGroup):
             root_dir: str, 
             split: str, 
             max_sequence_length: Optional[int] = 1021,
+            use_detailed_template: bool = False,
             **kwargs,
             ):
         data_name = "VenusX_Evo"
         task_type = "grounding_group"
-        question_template = Frag_Ground_Group
-        answer_template = Grounding_Answer_Group
         super().__init__(
             root_dir=root_dir, 
             data_name=data_name, 
             split=split, 
             task_type=task_type, 
             max_sequence_length=max_sequence_length,
-            question_template=question_template,
-            answer_template=answer_template,
+            use_detailed_template=use_detailed_template,
             **kwargs,
             )
             

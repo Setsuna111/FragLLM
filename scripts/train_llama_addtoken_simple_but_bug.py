@@ -35,7 +35,7 @@ from transformers import EsmModel, LlamaForCausalLM
 from peft import get_peft_model, LoraConfig, PeftModel
 import logging
 from models.protein_llama_addtoken import *
-from dataset.dataloader_refferring import FragRefDataset
+from dataset.dataloader_referring import FragRefDataset
 from dataset.dataloader_frag import FragDataCollator, make_multitask_dataset
 from transformers.models.auto.modeling_auto import (
     MODEL_FOR_CAUSAL_LM_MAPPING_NAMES,
@@ -87,11 +87,10 @@ class FragDataArguments:
     """Data arguments for fragment training."""
     root_dir: Optional[str] = field(default="./data", metadata={"help": "Root directory for datasets"})
     dataset_train_config: Optional[str] = field(default="ActGroundSingle", metadata={"help": "Dataset config for training"})
-    sample_rate_train: Optional[str] = field(default="1", metadata={"help": "Sample rate for training"})
     dataset_valid_config: Optional[str] = field(default=None, metadata={"help": "Dataset config for evaluation"})
-    sample_rate_valid: Optional[str] = field(default="1", metadata={"help": "Sample rate for evaluation"})
     max_sequence_length: Optional[int] = field(default=1021, metadata={"help": "Maximum sequence length"})
     filter_sequence: Optional[bool] = field(default=False, metadata={"help": "Whether to filter sequence"})
+    dataset_size: Optional[int] = field(default=-1, metadata={"help": "Dataset size for function dataset. -1 means use full dataset, otherwise truncate to this size"})
     # special tokens
     sequence_placeholder: Optional[str] = field(default="<|reserved_special_token_1|>", metadata={"help": "Sequence placeholder"})
     fragment_placeholder: Optional[str] = field(default="<|reserved_special_token_2|>", metadata={"help": "Fragment placeholder"})

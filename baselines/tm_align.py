@@ -1,6 +1,9 @@
-import sys
-sys.path.append(".")
 import os
+import sys
+
+# Add project root to path for imports
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, project_root)
 import subprocess
 import pandas as pd
 import argparse
@@ -9,7 +12,7 @@ from tqdm import tqdm
 
 def load_venusx_dataset(dataset_name, split):
     """Load VenusX dataset from JSON file"""
-    dataset_path = f"data/VenusX_{dataset_name}/{split}.json"
+    dataset_path = os.path.join(project_root, "data", f"VenusX_{dataset_name}", f"{split}.json")
     if not os.path.exists(dataset_path):
         raise FileNotFoundError(f"Dataset file not found: {dataset_path}")
     
@@ -230,7 +233,7 @@ if __name__ == "__main__":
                        help="VenusX dataset to analyze")
     parser.add_argument("--pdb_base_path", type=str, default="/home/lfj/database/VenusX_AFDB",
                        help="Base path to PDB files organized as: pdb_base_path/VenusX_{dataset}_AlphaFold2_PDB/alphafold2_pdb_fragment/{frag_id}.pdb")
-    parser.add_argument("--out_dir", type=str, default="baselines/tmalign_results", help="Output directory")
+    parser.add_argument("--out_dir", type=str, default=os.path.join(project_root, "baselines", "tmalign_results"), help="Output directory")
     parser.add_argument("--correction_file", type=str, 
                        default="/home/lfj/database/VenusX_AFDB/pdb_fragment_name_corrections.json",
                        help="Path to PDB filename correction mapping")

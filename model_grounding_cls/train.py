@@ -392,6 +392,28 @@ def main():
     
     # Initialize model
     logger.info("Initializing model...")
+    
+    # Save ProteinSAM initialization parameters to JSON file
+    protein_sam_init_params = {
+        "esm_model_path": args.esm_model_path,
+        "llama_model_path": args.llama_model_path,
+        "output_llama_layer": args.output_llama_layer,
+        "decoder_num_heads": args.decoder_num_heads,
+        "decoder_num_layers": args.decoder_num_layers,
+        "decoder_intermediate_size": args.decoder_intermediate_size,
+        "max_sequence_length": args.max_sequence_length,
+        "dropout_rate": args.dropout_rate,
+        "device": args.device,
+        "use_category_cache": args.use_category_cache,
+        "category_embeddings_path": args.category_embeddings_path if args.use_category_cache else None
+    }
+    
+    # Save parameters to output directory
+    params_file = os.path.join(args.output_dir, "protein_sam_init_params.json")
+    with open(params_file, 'w') as f:
+        json.dump(protein_sam_init_params, f, indent=2)
+    logger.info(f"Saved ProteinSAM initialization parameters to {params_file}")
+    
     model = ProteinSAM(
         esm_model_path=args.esm_model_path,
         llama_model_path=args.llama_model_path,
