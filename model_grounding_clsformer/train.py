@@ -5,7 +5,7 @@ Single GPU training for protein functional region grounding.
 
 import argparse
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 import random
 import numpy as np
 import torch
@@ -310,6 +310,8 @@ def main():
     # Model architecture arguments
     parser.add_argument("--decoder_num_heads", type=int, default=8,
                        help="Number of attention heads in decoder")
+    parser.add_argument("--decoder_num_self_attention_heads", type=int, default=8,
+                       help="Number of self-attention heads in decoder (if None, uses same as decoder_num_heads)")
     parser.add_argument("--decoder_num_layers", type=int, default=4,
                        help="Number of decoder layers")
     parser.add_argument("--decoder_intermediate_size", type=int, default=512,
@@ -326,7 +328,7 @@ def main():
                        help="Standard deviation for position noise")
     
     # Other arguments
-    parser.add_argument("--output_dir", type=str, default="./checkpoints_grounding_1018_4layers",
+    parser.add_argument("--output_dir", type=str, default="./checkpoints_grounding_1018_4layers_selfattn",
                        help="Output directory for model checkpoints")
     parser.add_argument("--log_dir", type=str, default="./logs",
                        help="Directory for logs")
@@ -399,6 +401,7 @@ def main():
         "llama_model_path": args.llama_model_path,
         "output_llama_layer": args.output_llama_layer,
         "decoder_num_heads": args.decoder_num_heads,
+        "decoder_num_self_attention_heads": args.decoder_num_self_attention_heads,
         "decoder_num_layers": args.decoder_num_layers,
         "decoder_intermediate_size": args.decoder_intermediate_size,
         "max_sequence_length": args.max_sequence_length,
@@ -421,6 +424,7 @@ def main():
         decoder_num_heads=args.decoder_num_heads,
         decoder_num_layers=args.decoder_num_layers,
         decoder_intermediate_size=args.decoder_intermediate_size,
+        decoder_num_self_attention_heads=args.decoder_num_self_attention_heads,
         max_sequence_length=args.max_sequence_length,
         dropout_rate=args.dropout_rate,
         device=args.device,

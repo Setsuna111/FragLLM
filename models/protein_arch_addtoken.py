@@ -3,52 +3,36 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import torch
 from torch import Tensor, nn
 from transformers.models.esm.modeling_esm import EsmModel
+from transformers import AutoModelForCausalLM
 import sys
 import os
 import json
+from pathlib import Path
 
-# Add model_grounding_cls to path for ProteinSAM by default
-# The grounding model type will be controlled by model arguments
-grounding_model_type = os.environ.get('GROUNDING_MODEL_TYPE', 'cls')  # 'cls' or 'seg'
-
-if grounding_model_type == 'seg':
-    sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'model_grounding_seg'))
-elif grounding_model_type == 'cls':
-    sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'model_grounding_cls'))
-
+os.sys.path.append(str(Path(__file__).resolve().parent.parent / "model_grounding_segformer"))
 from protein_sam import ProteinSAM
 
 
 def load_protein_sam_params_with_overrides(checkpoint_path: str) -> Dict[str, Any]:
     """
     Load ProteinSAM parameters from training and override special parameters for current use.
-    
-    Args:
-        checkpoint_path: Path to the ProteinSAM checkpoint (.pt file)
-        
-    Returns:
-        Dictionary of parameters with special parameters overridden
     """
-    # Get the directory containing the checkpoint
-    checkpoint_dir = os.path.dirname(checkpoint_path)
-    params_file = os.path.join(checkpoint_dir, "protein_sam_init_params.json")
+    params_file = os.path.join(os.path.dirname(checkpoint_path), "protein_sam_init_params.json")
+    assert os.path.exists(params_file), f"ProteinSAM checkpoint not found at {checkpoint_path}"
+    with open(params_file, 'r') as f:
+        params = json.load(f)
     
-    if os.path.exists(params_file):
-        print(f"Loading ProteinSAM parameters from {params_file}")
-        with open(params_file, 'r') as f:
-            params = json.load(f)
-        
-        # Override special parameters for current use
-        params['use_category_cache'] = False  # Not using category cache
-        params['category_embeddings_path'] = None  # No category embeddings
-        params['use_external_embeddings'] = True  # Use external embeddings from LLM
-        params['device'] = 'cpu'  # Will be moved to correct device later
-        params['llama_model_path'] = None  # No LLaMA needed
-        
-        print(f"Loaded and updated ProteinSAM parameters")
-        return params
-    else:
-        raise FileNotFoundError(f"ProteinSAM parameters file not found at {params_file}")
+    params['use_category_cache'] = False  # Not using category cache
+    params['use_external_embeddings'] = True  # Use external embeddings from LLM
+    params['use_external_esm'] = True  # Use external ESM embeddings
+    params['llama_model_path'] = None  # No LLaMA needed
+    # params['esm_model_path'] = None  # No ESM model needed, 但还是得传进去获取维度信息
+    params['category_embeddings_path'] = None  # No category embeddings
+    params['device'] = 'cpu'  # Will be moved to correct device later
+    
+    print(f"Loading ProteinSAM parameters from {params_file}")
+    return params
+
 
 class FeedForwardNetwork(nn.Module):
     """General FFN module."""
@@ -102,6 +86,7 @@ class PerceiverLayer(nn.Module):
         latents = self.ffn(residuals + latents) + residuals
         out: Tensor = self.output_layer_norm(latents)
         return out
+    
 class Perceiver(nn.Module):
     """Perceiver module that handles dim mismatch."""
 
@@ -129,7 +114,133 @@ class Perceiver(nn.Module):
         out = self.output_proj(latents)
         out: Tensor = self.out_layer_norm(out)
         return out
-# Q-former for fragment
+
+class MultiScalePerceiverLayer(nn.Module):
+    """Multi-scale Perceiver layer that handles global and fragment features."""
+    def __init__(self, emb_dim: int, num_heads: int, dropout: float,
+                 protein_emb_dim: Optional[int] = None, text_emb_dim: Optional[int] = None) -> None:
+        super().__init__()
+        self.emb_dim = emb_dim
+        self.protein_emb_dim = protein_emb_dim or emb_dim
+        self.text_emb_dim = text_emb_dim or emb_dim
+
+        # Two independent paths with different dimensions
+        # Global path (text_emb_dim)
+        self.global_attn = nn.MultiheadAttention(self.text_emb_dim, num_heads, dropout=dropout, batch_first=True)
+        self.global_ffn = FeedForwardNetwork(self.text_emb_dim, dropout, ff_expansion=0.5)
+        self.global_layer_norm = nn.LayerNorm(self.text_emb_dim)
+        self.global_linear = nn.Linear(self.text_emb_dim, emb_dim)
+
+        # Fragment path (protein_emb_dim)
+        self.fragment_attn = nn.MultiheadAttention(self.protein_emb_dim, num_heads, dropout=dropout, batch_first=True)
+        self.fragment_ffn = FeedForwardNetwork(self.protein_emb_dim, dropout, ff_expansion=0.5)
+        self.fragment_layer_norm = nn.LayerNorm(self.protein_emb_dim)
+        self.fragment_linear = nn.Linear(self.protein_emb_dim, emb_dim)
+
+        # Final fusion
+        self.global_gate = nn.Linear(emb_dim, 1)
+        self.fragment_gate = nn.Linear(emb_dim, 1)
+        self.output_layer_norm = nn.LayerNorm(emb_dim)
+
+    def forward(self, latents_global: Tensor, latents_fragment: Tensor,
+                global_features: Tensor, fragment_features: Tensor) -> Tensor:
+        """Multi-scale cross-attention with independent processing paths.
+
+        Args:
+            latents_global: [latent_size, text_emb_dim] - learnable latents for global path
+            latents_fragment: [latent_size, protein_emb_dim] - learnable latents for fragment path
+            global_features: [1, text_emb_dim] - global feature from adapter output
+            fragment_features: [fragment_len, protein_emb_dim] - residue-level features from ESM
+        """
+        # Global path: cross attention + FFN + residual (text_emb_dim)
+        global_residual = latents_global
+        global_attended, _ = self.global_attn(latents_global, global_features, global_features)
+        global_attended = self.global_ffn(global_residual + global_attended) + global_residual
+        global_attended = self.global_layer_norm(global_attended)
+
+        # Fragment path: cross attention + FFN + residual (protein_emb_dim)
+        fragment_residual = latents_fragment
+        fragment_attended, _ = self.fragment_attn(latents_fragment, fragment_features, fragment_features)
+        fragment_attended = self.fragment_ffn(fragment_residual + fragment_attended) + fragment_residual
+        fragment_attended = self.fragment_layer_norm(fragment_attended)
+
+        # Linear projection to unified dimension
+        global_projected = self.global_linear(global_attended)    # [latent_size, emb_dim]
+        fragment_projected = self.fragment_linear(fragment_attended)  # [latent_size, emb_dim]
+
+        # Adaptive gating for weighted combination
+        global_weight = torch.sigmoid(self.global_gate(global_projected))
+        fragment_weight = torch.sigmoid(self.fragment_gate(fragment_projected))
+
+        # Normalize weights
+        total_weight = global_weight + fragment_weight
+        global_weight = global_weight / (total_weight + 1e-8)
+        fragment_weight = fragment_weight / (total_weight + 1e-8)
+
+        # Final weighted combination
+        latents = global_weight * global_projected + fragment_weight * fragment_projected
+        out: Tensor = self.output_layer_norm(latents)
+        return out
+
+class MultiScalePerceiver(nn.Module):
+    """Multi-scale Perceiver that integrates global protein and fragment features."""
+
+    def __init__(
+        self, input_dim: int, latent_size: int, output_dim: int, num_heads: int, num_layers: int, dropout: float,
+        protein_emb_dim: Optional[int] = None, text_emb_dim: Optional[int] = None
+    ) -> None:
+        super().__init__()
+        self.protein_emb_dim = protein_emb_dim or input_dim
+        self.text_emb_dim = text_emb_dim or input_dim
+
+        # Two sets of learnable latents with different dimensions
+        self.latents_global = nn.Parameter(torch.randn(latent_size, self.text_emb_dim))
+        self.latents_fragment = nn.Parameter(torch.randn(latent_size, self.protein_emb_dim))
+        self.global_latent_norm = nn.LayerNorm(self.text_emb_dim)
+        self.fragment_latent_norm = nn.LayerNorm(self.protein_emb_dim)
+
+        # First layer uses multi-scale perceiver
+        self.multi_scale_perceiver = MultiScalePerceiverLayer(
+            input_dim, num_heads, dropout, self.protein_emb_dim, self.text_emb_dim
+        )
+
+        # Subsequent layers use standard self-attention
+        self.self_attention_layers = nn.ModuleList(
+            [AttentionLayer(input_dim, num_heads, dropout, ff_expansion=1) for _ in range(num_layers - 1)]
+        )
+
+        self.output_proj = nn.Linear(input_dim, output_dim, bias=False)
+        self.out_layer_norm = nn.LayerNorm(output_dim)
+
+    def forward(self, fragment_features: Tensor, global_feature: Tensor) -> Tensor:
+        """
+        Args:
+            fragment_features: [fragment_len, protein_emb_dim] - residue-level features from ESM
+            global_feature: [1, text_emb_dim] - global feature from adapter output
+        Returns:
+            latents: [latent_size, output_dim] - fixed-length fragment representation
+        """
+        # Initialize two sets of latents with different dimensions
+        latents_global = self.latents_global
+        latents_fragment = self.latents_fragment
+        latents_global = self.global_latent_norm(latents_global)
+        latents_fragment = self.fragment_latent_norm(latents_fragment)
+
+        # Multi-scale cross-attention with dual paths
+        latents = self.multi_scale_perceiver(
+            latents_global, latents_fragment, global_feature, fragment_features
+        )
+
+        # Self-attention refinement layers
+        for layer in self.self_attention_layers:
+            latents = layer(latents)
+
+        # Project to output dimension
+        out = self.output_proj(latents)
+        out: Tensor = self.out_layer_norm(out)
+        return out
+
+# Q-former for fragment with dual-mode support
 class FragmentAdapter(nn.Module):
     def __init__(
         self,
@@ -139,46 +250,88 @@ class FragmentAdapter(nn.Module):
         num_perceiver_heads: int,
         num_perceiver_layers: int,
         dropout: float,
+        frag_adapter_type: str = "qformer",  # "qformer" or "multilevel"
     ) -> None:
         super(FragmentAdapter, self).__init__()
         self.protein_layer_norm = nn.LayerNorm(protein_emb_dim)
-        self.perceiver_layer = Perceiver(
-            protein_emb_dim, perceiver_latent_size, text_emb_dim, num_perceiver_heads, num_perceiver_layers, dropout
-        )
+        self.frag_adapter_type = frag_adapter_type
+
+        if frag_adapter_type == "qformer":
+            # Original simple Perceiver
+            self.perceiver_layer = Perceiver(
+                protein_emb_dim, perceiver_latent_size, text_emb_dim, num_perceiver_heads, num_perceiver_layers, dropout
+            )
+        elif frag_adapter_type == "multilevel":
+            # Multi-scale Perceiver with global and fragment paths
+            self.perceiver_layer = MultiScalePerceiver(
+                text_emb_dim, perceiver_latent_size, text_emb_dim, num_perceiver_heads, num_perceiver_layers, dropout,
+                protein_emb_dim=protein_emb_dim, text_emb_dim=text_emb_dim
+            )
+        else:
+            raise ValueError(f"Unknown frag_adapter_type: {frag_adapter_type}. Must be 'qformer' or 'multilevel'")
 
     def forward(
         self,
         position_refs: List[List[int]],
         encoder_hidden_states: Tensor,
         encoder_attention_mask: Tensor,
+        adapter_output: Optional[Tensor] = None,
         **kwargs: Any,
     ) -> Union[Tuple[Tensor], Optional[Tuple[Tensor, Tuple[Tensor, ...]]]]:
-        
+
         assert encoder_hidden_states is not None
         batch_size = len(position_refs)
-        
+
         # 1. Normalize the protein embeddings first. This is a static operation.
         encoder_hidden_states = self.protein_layer_norm(encoder_hidden_states)
-        
+
         # 2. Prepare a list of inputs for the perceiver.
         # For items without a real position_ref, we create a standard dummy input.
         all_frag_latents = []
-        for i in range(batch_size):
-            protein_emb = encoder_hidden_states[i]
-            encoder_mask = encoder_attention_mask[i]
-            position_ref = position_refs[i]
 
-            if position_ref is not None:
-                # This is a REAL input
-                frag_hidden_states = protein_emb[encoder_mask][position_ref[0]:position_ref[1]]
-                all_frag_latents.append(self.perceiver_layer(frag_hidden_states))
-            else:
-                # This is a DUMMY input to make the batch complete
-                # Using a slice of length 1 is a safe default
-                dummy_hidden_states = protein_emb[encoder_mask][0:1]
-                all_frag_latents.append(self.perceiver_layer(dummy_hidden_states))
+        if self.frag_adapter_type == "qformer":
+            # Original qformer mode: only uses ESM encoder hidden states
+            for i in range(batch_size):
+                protein_emb = encoder_hidden_states[i]
+                encoder_mask = encoder_attention_mask[i]
+                position_ref = position_refs[i]
 
-        
+                if position_ref is not None:
+                    # This is a REAL input
+                    frag_hidden_states = protein_emb[encoder_mask][position_ref[0]:position_ref[1]]
+                    all_frag_latents.append(self.perceiver_layer(frag_hidden_states))
+                else:
+                    # This is a DUMMY input to make the batch complete
+                    # Using a slice of length 1 is a safe default
+                    dummy_hidden_states = protein_emb[encoder_mask][0:1]
+                    all_frag_latents.append(self.perceiver_layer(dummy_hidden_states))
+
+        elif self.frag_adapter_type == "multilevel":
+            # Multi-level mode: uses both ESM hidden states and adapter output
+            assert adapter_output is not None, "adapter_output is required for multilevel mode"
+
+            for i in range(batch_size):
+                protein_emb = encoder_hidden_states[i]  # For fragment features (residue-level)
+                encoder_mask = encoder_attention_mask[i]
+                position_ref = position_refs[i]
+
+                if position_ref is not None:
+                    # Extract fragment features from ESM output (residue-level)
+                    frag_features = protein_emb[encoder_mask][position_ref[0]:position_ref[1]]  # [fragment_len, protein_emb_dim]
+
+                    # Global feature from adapter output (semantically aligned with text)
+                    global_feature = adapter_output[i][encoder_mask].mean(dim=0, keepdim=True)  # [1, text_emb_dim]
+
+                    # Multi-scale processing: fragment from ESM, global from adapter
+                    fragment_latents = self.perceiver_layer(frag_features, global_feature)
+                    all_frag_latents.append(fragment_latents)
+                else:
+                    # Dummy processing for batch completeness
+                    dummy_frag_features = protein_emb[encoder_mask][0:1]  # [1, protein_emb_dim]
+                    dummy_global_feature = adapter_output[i][encoder_mask].mean(dim=0, keepdim=True)  # [1, text_emb_dim]
+                    dummy_latents = self.perceiver_layer(dummy_frag_features, dummy_global_feature)
+                    all_frag_latents.append(dummy_latents)
+
         # 3. Reconstruct the final output list.
         # This final loop is fine because it doesn't call any nn.Modules.
         # It just selects the results based on the original condition.
@@ -187,7 +340,7 @@ class FragmentAdapter(nn.Module):
             if position_refs[i] is not None:
                 final_frag_latents[i] = all_frag_latents[i]
             # If position_refs[i] was None, the list entry correctly remains None.
-                
+
         return final_frag_latents
 
 # ProteinSAM replaces FragmentPositionDecoder
@@ -228,17 +381,10 @@ class ProteinMetaModel:
         if hasattr(config, "esm_path"):
             self.esm_encoder = EsmModel.from_pretrained(config.esm_path, add_pooling_layer=False)
             self.adapter = ModalityAdapter(config.protein_emb_dim, config.intermediate_dim, config.hidden_size, config.dropout_rate)
-            self.fragment_adapter = FragmentAdapter(config.protein_emb_dim, config.hidden_size, config.perceiver_latent_size, config.num_perceiver_heads, config.num_perceiver_layers, config.dropout_rate)
-            
-            # Get ProteinSAM checkpoint path for loading parameters
-            proteinSAM_checkpoint_path = os.environ.get('PROTEIN_SAM_CHECKPOINT_PATH')
-            assert proteinSAM_checkpoint_path is not None, "Please set the PROTEIN_SAM_CHECKPOINT_PATH environment variable to the ProteinSAM checkpoint path."
-            proteinSAM_checkpoint_path = os.path.abspath(proteinSAM_checkpoint_path)
-            
-            # Load parameters with overrides
-            protein_sam_params = load_protein_sam_params_with_overrides(proteinSAM_checkpoint_path)
-            
-            self.protein_sam = ProteinSAM(**protein_sam_params)
+            frag_adapter_type = getattr(config, "frag_adapter_type", "qformer")  # Default to qformer for backward compatibility
+            self.fragment_adapter = FragmentAdapter(config.protein_emb_dim, config.hidden_size, config.perceiver_latent_size, config.num_perceiver_heads, config.num_perceiver_layers, config.dropout_rate, frag_adapter_type=frag_adapter_type)
+            self.protein_sam = ProteinSAM(**load_protein_sam_params_with_overrides(config.protein_sam_checkpoint_path))
+    
     def get_esm_encoder(self):
         esm_encoder = getattr(self, "esm_encoder", None)
         if type(esm_encoder) is list:
@@ -252,6 +398,8 @@ class ProteinMetaModel:
         self.config.perceiver_latent_size = model_args.perceiver_latent_size
         self.config.num_perceiver_heads = model_args.num_perceiver_heads
         self.config.num_perceiver_layers = model_args.num_perceiver_layers
+        self.config.frag_adapter_type = getattr(model_args, "frag_adapter_type", "qformer")  # Default to qformer
+
         if self.get_esm_encoder() is None:
             esm_encoder = EsmModel.from_pretrained(model_args.esm_path, add_pooling_layer=False)
             if fsdp is not None and len(fsdp) > 0:
@@ -269,31 +417,18 @@ class ProteinMetaModel:
         if getattr(self, "adapter", None) is None:
             self.adapter = ModalityAdapter(self.config.protein_emb_dim,self.config.intermediate_dim, self.config.hidden_size, self.config.dropout_rate)
         if getattr(self, "fragment_adapter", None) is None:
-            self.fragment_adapter = FragmentAdapter(self.config.protein_emb_dim, self.config.hidden_size, self.config.perceiver_latent_size,self.config.num_perceiver_heads,self.config.num_perceiver_layers,self.config.dropout_rate)
+            self.fragment_adapter = FragmentAdapter(
+                self.config.protein_emb_dim,
+                self.config.hidden_size,
+                self.config.perceiver_latent_size,
+                self.config.num_perceiver_heads,
+                self.config.num_perceiver_layers,
+                self.config.dropout_rate,
+                frag_adapter_type=self.config.frag_adapter_type
+            )
         if getattr(self, "protein_sam", None) is None:
-            # Get ProteinSAM checkpoint path for loading parameters
-            proteinSAM_checkpoint_path = os.environ.get('PROTEIN_SAM_CHECKPOINT_PATH')
-            assert proteinSAM_checkpoint_path is not None, "Please set the PROTEIN_SAM_CHECKPOINT_PATH environment variable to the ProteinSAM checkpoint path."
-            
-            proteinSAM_checkpoint_path = os.path.abspath(proteinSAM_checkpoint_path)
-            
-            # Load parameters with overrides
-            protein_sam_params = load_protein_sam_params_with_overrides(proteinSAM_checkpoint_path)
-            
-            # Initialize ProteinSAM with loaded parameters
-            self.protein_sam = ProteinSAM(**protein_sam_params)
-            
-            # Load pretrained ProteinSAM weights
-            print(f"Loading ProteinSAM pretrained weights from {proteinSAM_checkpoint_path}")
-            self.protein_sam.load_model(proteinSAM_checkpoint_path)
-            
-            # Only freeze the ESM encoder in ProteinSAM, allow other parts to be trainable
-            if hasattr(self.protein_sam, 'esm_model') and self.protein_sam.esm_model is not None:
-                for param in self.protein_sam.esm_model.parameters():
-                    param.requires_grad = False
-            
-            # Keep other ProteinSAM components (decoder layers, embeddings) trainable
-            # This allows training and saving of the ProteinSAM parameters except ESM encoder
+            self.protein_sam = ProteinSAM(**load_protein_sam_params_with_overrides(model_args.protein_sam_checkpoint_path))
+            self.protein_sam.load_model(model_args.protein_sam_checkpoint_path)
 
         if model_args.load_adapter_checkpoint_dir is not None:
             adapter_weights = torch.load(model_args.load_adapter_checkpoint_dir, map_location="cpu")
@@ -309,7 +444,6 @@ class ProteinMetaModel:
             self.fragment_adapter.load_state_dict(get_w(fragment_weights, "fragment_adapter"))
             print("Loaded fragment adapter weights from {}".format(model_args.load_fragment_checkpoint_dir))
             print("Loaded fragment adapter weights keys: {}".format(get_w(fragment_weights, "fragment_adapter").keys()))
-        
 
 class ProteinMetaForCausalLM(ABC):
     @abstractmethod
@@ -349,7 +483,7 @@ class ProteinMetaForCausalLM(ABC):
             # adapter forward
             adapter_output = self.get_model().adapter(encoder_hidden_states)
             if input_ids is None:
-                return None, position_ids, None, None, None, labels, encoder_output, adapter_output, encoder_attention_mask
+                return None, position_ids, None, None, None, labels, encoder_output, adapter_output, encoder_attention_mask, encoder_hidden_states
             # preparation
             batch_size, seq_len = input_ids.size()
             _, encoder_seq_len, _ = adapter_output.size()
@@ -387,6 +521,7 @@ class ProteinMetaForCausalLM(ABC):
                     position_refs=position_refs,
                     encoder_hidden_states=encoder_hidden_states,
                     encoder_attention_mask=encoder_attention_mask,
+                    adapter_output=adapter_output,  # Pass adapter_output for multilevel mode
                 )
                 fragment_mask = input_ids == self.config.fragment_placeholder_id
                 inputs_embeds[fragment_mask] = torch.cat([fragment_embed for fragment_embed in fragment_embeds if fragment_embed is not None], dim=-2)
@@ -397,10 +532,11 @@ class ProteinMetaForCausalLM(ABC):
                     position_refs=dummy_position_refs,
                     encoder_hidden_states=dummy_protein_hidden_states,
                     encoder_attention_mask=encoder_attention_mask,
+                    adapter_output=adapter_output,  # Pass adapter_output for multilevel mode
                 )
                 inputs_embeds = inputs_embeds +(0.0 * torch.cat(dummy_fragment_embeds, dim=-2)).sum()
         else:
-            return None, position_ids, attention_mask, past_key_values, inputs_embeds, labels, None, None, None
+            return None, position_ids, attention_mask, past_key_values, inputs_embeds, labels, None, None, None, None
 
         # inputs_embeds_list = []
         # for i in range(len(position_refs)):
@@ -417,4 +553,4 @@ class ProteinMetaForCausalLM(ABC):
         #         inputs_embeds_list.append(inputs_embeds[i])
         # inputs_embeds = torch.stack(inputs_embeds_list, dim=0)
 
-        return None, position_ids, attention_mask, past_key_values, inputs_embeds, labels, encoder_output, adapter_output, encoder_attention_mask
+        return None, position_ids, attention_mask, past_key_values, inputs_embeds, labels, encoder_output, adapter_output, encoder_attention_mask, encoder_hidden_states

@@ -155,7 +155,7 @@ class FunctionDataset(torch.utils.data.Dataset):
             data_item["fullname"] = ann_file.iloc[i]["Full Name"]
             data_item["taxon"] = ann_file.iloc[i]["taxon"]
             data_item["description"] = ann_file.iloc[i]["function"]
-
+            
             # debug info
             data_item["dataset_idx"] = dataset_idx
             dataset_idx += 1 

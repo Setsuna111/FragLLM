@@ -87,7 +87,7 @@ class ProteinLlamaForCausalLM(LlamaForCausalLM, ProteinMetaForCausalLM):
     ):
         input_ids_old = input_ids.clone()
         if inputs_embeds is None:
-            input_ids, position_ids, attention_mask, past_key_values, inputs_embeds, labels, encoder_output, adapter_output, encoder_attention_mask = self.prepare_inputs_labels_for_protein(
+            input_ids, position_ids, attention_mask, past_key_values, inputs_embeds, labels, encoder_output, adapter_output, encoder_attention_mask, protein_encoder_hidden_states = self.prepare_inputs_labels_for_protein(
                 input_ids, position_ids, attention_mask, past_key_values, labels,
                 protein_input_ids, protein_attention_mask, protein_position_ids, protein_head_mask, protein_inputs_embeds, position_refs, output_attentions,output_hidden_states,return_dict
             )
@@ -137,19 +137,24 @@ class ProteinLlamaForCausalLM(LlamaForCausalLM, ProteinMetaForCausalLM):
                             position_pair = position_grds[i][0][token_idx]  # [group][position_idx][start,end]
                             start_labels = torch.tensor([position_pair[0]], device=protein_input_ids.device)
                             end_labels = torch.tensor([position_pair[1] - 1], device=protein_input_ids.device)
-                        
+                        # for segmentation loss calculation
+                        start_end_labels = torch.zeros_like(protein_input_ids[i:i+1], dtype=torch.int64, device=protein_input_ids.device)
+                        start_end_labels = start_end_labels[:, 1:-1]
+                        if start_labels is not None and end_labels is not None:
+                            start_end_labels[0, start_labels.item():end_labels.item() + 1] = 1
+
                         # Use special token embedding directly as external prompt
                         special_token_embedding = postoken_hidden_states.unsqueeze(1)  # (1, 1, hidden_size)
+                        esm_embeddings = protein_encoder_hidden_states[i:i+1, 1: -1]  # Exclude CLS and SEP embeddings
                         
                         # Call ProteinSAM with external embedding
                         sam_outputs = self.get_model().protein_sam(
-                            protein_input_ids=protein_input_ids[i:i+1],
                             protein_attention_mask=protein_attention_mask[i:i+1],
                             external_prompt_embeddings=special_token_embedding,  # Use special token embedding
-                            start_labels=start_labels,  # Ground truth for training
-                            end_labels=end_labels       # Ground truth for training
+                            external_esm_embeddings=esm_embeddings,
+                            residue_labels=start_end_labels
                         )
-                        
+                    
                         sample_outputs.append(sam_outputs)
                     
                     # Store all outputs for this sample
@@ -158,11 +163,30 @@ class ProteinLlamaForCausalLM(LlamaForCausalLM, ProteinMetaForCausalLM):
                     assert position_grds[i] is None
                     position_grds_pred.append(None)
         else:
-            dummy_hidden_states = hidden_states[0][0:1]
-            position_grds_pred = self.get_model().fragment_position_decoder(dummy_hidden_states.unsqueeze(1).contiguous(), dummy_hidden_states.unsqueeze(0).expand(dummy_hidden_states.shape[0], -1, -1).contiguous()).squeeze(1)
+            # 当没有grounding任务时,创建dummy输入保持梯度流
+            # breakpoint()
+            dummy_external_prompt = hidden_states[0:1, 0:1, :].contiguous()
+            dummy_esm_embeddings = protein_encoder_hidden_states[0:1, 1:-1, :].contiguous()  # 完整序列，去掉CLS和SEP
+            dummy_labels = torch.zeros(1, protein_input_ids.size(1)-2,
+                            dtype=torch.long, device=protein_input_ids.device)
+
+            dummy_sam_outputs = self.get_model().protein_sam(
+                protein_attention_mask=protein_attention_mask[0:1],
+                external_prompt_embeddings=dummy_external_prompt,
+                external_esm_embeddings=dummy_esm_embeddings,
+                residue_labels=dummy_labels
+            )
+
+            # 将dummy loss乘以0加到output.loss上，保持梯度流但不影响训练
+            if 'loss' in dummy_sam_outputs:
+                output.loss = output.loss + 0.0 * dummy_sam_outputs['loss']
+
+            # 设置为None，不传递给_calculate_loss进行实际的loss计算
             position_grds_pred = None
+            
         if inference:
             return position_grds_pred, position_grds
+        
         return self._calculate_loss(position_grds_pred, position_grds, output)
             
     def _calculate_loss(self, position_grds_pred, position_grds, output):
@@ -257,31 +281,31 @@ class ProteinLlamaForCausalLM(LlamaForCausalLM, ProteinMetaForCausalLM):
             )
         else:
             return self.model_forward(
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            position_ids=position_ids,
-            past_key_values=past_key_values,
-            inputs_embeds=inputs_embeds,
-            labels=labels,
-            # protein amino-acid sequence inputs
-            protein_input_ids=protein_input_ids,
-            protein_attention_mask=protein_attention_mask,
-            protein_position_ids=protein_position_ids, 
-            protein_head_mask=protein_head_mask,
-            protein_inputs_embeds=protein_inputs_embeds,
-            # fragment inputs
-            position_refs=position_refs,
-            position_grds=position_grds,
-            # behavior control arguments
-            use_cache=use_cache,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
-            return_dict=return_dict,
-            return_encoder_outputs=return_encoder_outputs,
-            return_adapter_outputs=return_adapter_outputs, 
-            return_decoder_inputs=return_decoder_inputs,
-            cache_position=cache_position,
-            **kwargs,
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                position_ids=position_ids,
+                past_key_values=past_key_values,
+                inputs_embeds=inputs_embeds,
+                labels=labels,
+                # protein amino-acid sequence inputs
+                protein_input_ids=protein_input_ids,
+                protein_attention_mask=protein_attention_mask,
+                protein_position_ids=protein_position_ids, 
+                protein_head_mask=protein_head_mask,
+                protein_inputs_embeds=protein_inputs_embeds,
+                # fragment inputs
+                position_refs=position_refs,
+                position_grds=position_grds,
+                # behavior control arguments
+                use_cache=use_cache,
+                output_attentions=output_attentions,
+                output_hidden_states=output_hidden_states,
+                return_dict=return_dict,
+                return_encoder_outputs=return_encoder_outputs,
+                return_adapter_outputs=return_adapter_outputs, 
+                return_decoder_inputs=return_decoder_inputs,
+                cache_position=cache_position,
+                **kwargs,
             )
 
     @torch.no_grad()

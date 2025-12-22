@@ -74,6 +74,9 @@ class FragModelArguments:
     ce_loss_weight: Optional[float] = field(default=1.0, metadata={"help": "ce loss weight"})
     position_loss_weight: Optional[float] = field(default=0.1, metadata={"help": "position loss weight"})
 
+    # Fragment adapter type
+    frag_adapter_type: Optional[str] = field(default="qformer", metadata={"help": "Fragment adapter type: 'qformer' or 'multilevel'"})
+
     def __repr__(self):
         fields = {field.name: getattr(self, field.name) for field in self.__dataclass_fields__.values()}
         dynamic_fields = {k: v for k, v in self.__dict__.items() if k not in fields}
@@ -85,7 +88,8 @@ class FragDataArguments:
     """Data arguments for fragment training."""
     root_dir: Optional[str] = field(default="./data", metadata={"help": "Root directory for datasets"})
     use_detailed_template: Optional[bool] = field(default=False, metadata={"help": "Whether to use detailed template"})
-    dataset_train_config: Optional[str] = field(default="ActGroundSingle", metadata={"help": "Dataset config for training"})
+    # dataset_train_config: Optional[str] = field(default="ActGroundSingle||ActRefClass", metadata={"help": "Dataset config for training"})
+    dataset_train_config: Optional[str] = field(default="ActRefClass", metadata={"help": "Dataset config for training"})
     dataset_valid_config: Optional[str] = field(default=None, metadata={"help": "Dataset config for evaluation"})
     max_sequence_length: Optional[int] = field(default=1021, metadata={"help": "Maximum sequence length"})
     filter_sequence: Optional[bool] = field(default=False, metadata={"help": "Whether to filter sequence"})
@@ -516,8 +520,8 @@ def train(attn_implementation=None):
         if model_args.load_pro2text_checkpoint_dir is not None and pro2text_model is not None:
             pro2text_param_dict = pro2text_model.state_dict()
             pro2text_adapter_weights = {k.split('adapter.')[1]: v for k, v in pro2text_param_dict.items() if 'adapter.' in k}
-            model.get_model().adapter.load_state_dict(pro2text_adapter_weights, strict=False)
 
+            model.get_model().adapter.load_state_dict(pro2text_adapter_weights, strict=False)
             rank0_print("Loaded Prot2Text adapter weights from ", model_args.load_pro2text_checkpoint_dir)
             del pro2text_model
 

@@ -30,104 +30,64 @@ def load_pretrained_model_fragllm_addtoken(model_path, model_base, model_name, l
     if use_flash_attn:
         kwargs['attn_implementation'] = 'flash_attention_2'
 
+    from models.protein_llama_addtoken import ProteinLlamaConfig
+    lora_cfg_pretrained = ProteinLlamaConfig.from_pretrained(model_path)
+    
+    # Load tokenizer and add special tokens (same as training)
+    tokenizer = AutoTokenizer.from_pretrained(model_base, use_fast=False, pad_token='<|reserved_special_token_0|>')
+    
+    # Add the same special tokens as in training
+    special_tokens = [
+        "<frag_position>",  # position_placeholder
+        "<p>",             # phrase_start_placeholder  
+        "</p>"             # phrase_end_placeholder
+    ]
+    tokenizer.add_tokens(special_tokens, special_tokens=True)
+    
+    # Temporarily set vocab_size to base model size for loading
+    base_tokenizer = AutoTokenizer.from_pretrained(model_base, use_fast=False)
+    original_vocab_size = lora_cfg_pretrained.vocab_size
+    lora_cfg_pretrained.vocab_size = len(base_tokenizer)
+    
+    print('Loading FragLLM from base model...')
+    model = ProteinLlamaForCausalLM.from_pretrained(model_base, low_cpu_mem_usage=True, config=lora_cfg_pretrained, **kwargs)
+    
+    # Restore original vocab_size for consistency
+    lora_cfg_pretrained.vocab_size = original_vocab_size
+    
+    # Resize token embeddings to match training vocabulary size AFTER model loading
+    model.resize_token_embeddings(len(tokenizer))
 
-    if 'lora' in model_name.lower() and model_base is None:
-            warnings.warn('There is `lora` in model name but no `model_base` is provided. If you are loading a LoRA model, please provide the `model_base` argument.')
-    if 'lora' in model_name.lower() and model_base is not None:
-        from models.protein_llama_addtoken import ProteinLlamaConfig
-        lora_cfg_pretrained = ProteinLlamaConfig.from_pretrained(model_path)
-        
-        # Load tokenizer and add special tokens (same as training)
-        tokenizer = AutoTokenizer.from_pretrained(model_base, use_fast=False, pad_token='<|reserved_special_token_0|>')
-        
-        # Add the same special tokens as in training
-        special_tokens = [
-            "<frag_position>",  # position_placeholder
-            "<p>",             # phrase_start_placeholder  
-            "</p>"             # phrase_end_placeholder
-        ]
-        tokenizer.add_tokens(special_tokens, special_tokens=True)
-        
-        # Temporarily set vocab_size to base model size for loading
-        base_tokenizer = AutoTokenizer.from_pretrained(model_base, use_fast=False)
-        original_vocab_size = lora_cfg_pretrained.vocab_size
-        lora_cfg_pretrained.vocab_size = len(base_tokenizer)
-        
-        print('Loading FragLLM from base model...')
-        model = ProteinLlamaForCausalLM.from_pretrained(model_base, low_cpu_mem_usage=True, config=lora_cfg_pretrained, **kwargs)
-        
-        # Restore original vocab_size for consistency
-        lora_cfg_pretrained.vocab_size = original_vocab_size
-        
-        # Resize token embeddings to match training vocabulary size AFTER model loading
-        model.resize_token_embeddings(len(tokenizer))
-
-        print('Loading additional FragLLM weights...')
-        if os.path.exists(os.path.join(model_path, 'non_lora_trainables.bin')):
-            non_lora_trainables = torch.load(os.path.join(model_path, 'non_lora_trainables.bin'), map_location='cpu')
-        else:
-            # this is probably from HF Hub
-            from huggingface_hub import hf_hub_download
-            def load_from_hf(repo_id, filename, subfolder=None):
-                cache_file = hf_hub_download(
-                    repo_id=repo_id,
-                    filename=filename,
-                    subfolder=subfolder)
-                return torch.load(cache_file, map_location='cpu')
-            non_lora_trainables = load_from_hf(model_path, 'non_lora_trainables.bin')
-        non_lora_trainables = {(k[11:] if k.startswith('base_model.') else k): v for k, v in non_lora_trainables.items()}
-        if any(k.startswith('model.model.') for k in non_lora_trainables):
-            non_lora_trainables = {(k[6:] if k.startswith('model.') else k): v for k, v in non_lora_trainables.items()}
-        # import pdb; pdb.set_trace()
-        
-        # Then load the trained embeddings (which include the expanded vocabulary)
-        model.load_state_dict(non_lora_trainables, strict=False)
-        # import pdb;pdb.set_trace()
-        from peft import PeftModel
-        print('Loading LoRA weights...')
-        model = PeftModel.from_pretrained(model, model_path)
-        print('Merging LoRA weights...')
-        model = model.merge_and_unload()
-        print('Model is loaded...')
-    elif model_base is not None:
-        # this may be mm projector only
-        print('Loading FragLLM from base model...')
-        tokenizer = AutoTokenizer.from_pretrained(model_base, use_fast=False, pad_token='<|reserved_special_token_0|>')
-        
-        # Add special tokens
-        special_tokens = [
-            "<frag_position>",
-            "<p>", 
-            "</p>"
-        ]
-        tokenizer.add_tokens(special_tokens, special_tokens=True)
-        cfg_pretrained = AutoConfig.from_pretrained(model_path)
-        model = ProteinLlamaForCausalLM.from_pretrained(model_base, low_cpu_mem_usage=True, config=cfg_pretrained, **kwargs)
-        
-        # Resize token embeddings
-        model.resize_token_embeddings(len(tokenizer))
-        adapter_weights = torch.load(os.path.join(model_path, 'adapter.bin'), map_location='cpu')
-        adapter_weights = {k: v.to(torch.float16) for k, v in adapter_weights.items()}
-        model.load_state_dict(adapter_weights, strict=False)
-        fragment_adapter_weights = torch.load(os.path.join(model_path, 'fragment_adapter.bin'), map_location='cpu')
-        fragment_adapter_weights = {k: v.to(torch.float16) for k, v in fragment_adapter_weights.items()}
-        model.load_state_dict(fragment_adapter_weights, strict=False)
+    print('Loading additional FragLLM weights...')
+    if os.path.exists(os.path.join(model_path, 'non_lora_trainables.bin')):
+        non_lora_trainables = torch.load(os.path.join(model_path, 'non_lora_trainables.bin'), map_location='cpu')
     else:
-        tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False, pad_token='<|reserved_special_token_0|>')
-        
-        # For full model loading, special tokens should already be included
-        model = ProteinLlamaForCausalLM.from_pretrained(
-            model_path,
-            low_cpu_mem_usage=True,
-            **kwargs
-        )
+        # this is probably from HF Hub
+        from huggingface_hub import hf_hub_download
+        def load_from_hf(repo_id, filename, subfolder=None):
+            cache_file = hf_hub_download(
+                repo_id=repo_id,
+                filename=filename,
+                subfolder=subfolder)
+            return torch.load(cache_file, map_location='cpu')
+        non_lora_trainables = load_from_hf(model_path, 'non_lora_trainables.bin')
+    non_lora_trainables = {(k[11:] if k.startswith('base_model.') else k): v for k, v in non_lora_trainables.items()}
+    if any(k.startswith('model.model.') for k in non_lora_trainables):
+        non_lora_trainables = {(k[6:] if k.startswith('model.') else k): v for k, v in non_lora_trainables.items()}
+    # import pdb; pdb.set_trace()
+    
+    # Then load the trained embeddings (which include the expanded vocabulary)
+    model.load_state_dict(non_lora_trainables, strict=False)
+    # import pdb;pdb.set_trace()
+    from peft import PeftModel
+    print('Loading LoRA weights...')
+    model = PeftModel.from_pretrained(model, model_path)
+    print('Merging LoRA weights...')
+    model = model.merge_and_unload()
+    print('Model is loaded...')
 
     esm_encoder = EsmModel.from_pretrained(model.config.esm_path, add_pooling_layer=False)
     model.get_model().esm_encoder = esm_encoder
-
-    # 看起来需要这样操作一下，虽然不知道为什么
-    sam_esm_encoder = EsmModel.from_pretrained("/home/lfj/projects_dir/pretrained_model/esm2_t30_150M_UR50D/", add_pooling_layer=False)
-    model.get_model().protein_sam.protein_encoder = sam_esm_encoder
     
     return tokenizer, model, esm_encoder
 
@@ -154,11 +114,12 @@ def merge_lora_addtoken(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     
-    # 0917 test
-    model_path = "/home/lfj/projects_dir/FragLLM/checkpoints/grounding_lora_only_act_trainable_iousam/"
+    # 虽然这样设置有些奇怪
+    # 这一版本删减掉了一些不必要的代码
+    model_path = "/home/lfj/projects_dir/FragLLM/checkpoints/hybrid_tasks_base"
 
     model_path = model_path.rstrip('/')
-    merged_path = model_path + "_merge_addtoken"
+    merged_path = model_path + "_merge"
 
     parser.add_argument("--model-path", type=str, default=model_path)
     parser.add_argument("--model-base", type=str, default="/home/lfj/projects_dir/pretrained_model/Llama-3.1-8B-Instruct")

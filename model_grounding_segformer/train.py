@@ -5,7 +5,7 @@ Single GPU training for protein functional region grounding.
 
 import argparse
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 import random
 import numpy as np
 import torch
@@ -54,50 +54,43 @@ def setup_logging(log_dir: str, log_level: str = "INFO") -> logging.Logger:
     return logger
 
 
-def calculate_accuracy(predictions: torch.Tensor, labels: torch.Tensor) -> float:
-    """Calculate exact match accuracy."""
-    correct = (predictions == labels).float()
+def calculate_mask_accuracy(mask_preds: torch.Tensor, mask_labels: torch.Tensor, attention_mask: torch.Tensor = None) -> float:
+    """Calculate binary mask accuracy."""
+    if attention_mask is not None:
+        mask = attention_mask.bool()
+        mask_preds = mask_preds[mask]
+        mask_labels = mask_labels[mask]
+    
+    correct = (mask_preds == mask_labels).float()
     return correct.mean().item()
 
 
-def calculate_iou_accuracy(
-    start_preds: torch.Tensor, 
-    end_preds: torch.Tensor,
-    start_labels: torch.Tensor, 
-    end_labels: torch.Tensor,
-    iou_threshold: float = 0.5
-) -> float:
-    """Calculate IoU-based accuracy for region predictions."""
-    batch_size = start_preds.shape[0]
-    correct = 0
+def calculate_mask_iou(mask_preds: torch.Tensor, mask_labels: torch.Tensor, attention_mask: torch.Tensor = None) -> float:
+    """Calculate IoU for binary masks."""
+    batch_size = mask_preds.shape[0]
+    total_iou = 0.0
     
-    for i in range(batch_size):
-        pred_start = start_preds[i].item()
-        pred_end = end_preds[i].item()
-        true_start = start_labels[i].item()
-        true_end = end_labels[i].item()
+    for b in range(batch_size):
+        pred = mask_preds[b]
+        true = mask_labels[b]
         
-        # Ensure pred_start <= pred_end
-        if pred_start > pred_end:
-            pred_start, pred_end = pred_end, pred_start
-        
-        # Calculate intersection
-        intersection_start = max(pred_start, true_start)
-        intersection_end = min(pred_end, true_end)
-        intersection = max(0, intersection_end - intersection_start + 1)
-        
-        # Calculate union
-        pred_length = pred_end - pred_start + 1
-        true_length = true_end - true_start + 1
-        union = pred_length + true_length - intersection
+        if attention_mask is not None:
+            mask = attention_mask[b].bool()
+            pred = pred[mask]
+            true = true[mask]
         
         # Calculate IoU
-        iou = intersection / union if union > 0 else 0
+        intersection = (pred & true).float().sum()
+        union = (pred | true).float().sum()
         
-        if iou >= iou_threshold:
-            correct += 1
+        if union > 0:
+            iou = intersection / union
+        else:
+            iou = 1.0 if intersection == 0 else 0.0
+        
+        total_iou += iou
     
-    return correct / batch_size
+    return total_iou / batch_size
 
 
 def train_epoch(
@@ -111,9 +104,10 @@ def train_epoch(
     """Train for one epoch."""
     model.train()
     total_loss = 0.0
-    total_start_acc = 0.0
-    total_end_acc = 0.0
-    total_iou_acc = 0.0
+    total_dice_loss = 0.0
+    total_ce_loss = 0.0
+    total_acc = 0.0
+    total_iou = 0.0
     num_batches = len(train_loader)
     
     progress_bar = tqdm(train_loader, desc=f"Epoch {epoch} Training")
@@ -137,51 +131,58 @@ def train_epoch(
             text_attention_mask=batch.get("text_attention_mask"),
             categories=batch["categories"],
             point_positions=point_positions,
-            start_labels=batch["start_labels"],
-            end_labels=batch["end_labels"]
+            residue_labels=batch["residue_labels"]
         )
         
         loss = outputs["loss"]
-        
+        dice_loss = outputs["dice_loss"]
+        ce_loss = outputs["ce_loss"]
+                
         # Backward pass
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
         
-        # Calculate metrics
-        start_acc = calculate_accuracy(outputs["start_predictions"], batch["start_labels"])
-        end_acc = calculate_accuracy(outputs["end_predictions"], batch["end_labels"])
-        iou_acc = calculate_iou_accuracy(
-            outputs["start_predictions"], 
-            outputs["end_predictions"],
-            batch["start_labels"], 
-            batch["end_labels"]
+        adjusted_mask = batch["protein_attention_mask"][:, 1:-1]
+
+        # Calculate metrics using unified residue labels
+        mask_acc = calculate_mask_accuracy(
+            outputs["mask_predictions"], 
+            batch["residue_labels"], 
+            adjusted_mask
+        )
+        mask_iou = calculate_mask_iou(
+            outputs["mask_predictions"], 
+            batch["residue_labels"], 
+            adjusted_mask
         )
         
         # Update running averages
         total_loss += loss.item()
-        total_start_acc += start_acc
-        total_end_acc += end_acc
-        total_iou_acc += iou_acc
+        total_dice_loss += dice_loss.item()
+        total_ce_loss += ce_loss.item()
+        total_acc += mask_acc  # Reuse variable names for compatibility
+        total_iou += mask_iou
         
         # Update progress bar
         avg_loss = total_loss / (batch_idx + 1)
-        avg_start_acc = total_start_acc / (batch_idx + 1)
-        avg_end_acc = total_end_acc / (batch_idx + 1)
-        avg_iou_acc = total_iou_acc / (batch_idx + 1)
+        avg_loss_dice = total_dice_loss / (batch_idx + 1)
+        avg_loss_ce = total_ce_loss / (batch_idx + 1)
+        avg_mask_acc = total_acc / (batch_idx + 1)
+        avg_mask_iou = total_iou / (batch_idx + 1)
         
         progress_bar.set_postfix({
             "loss": f"{avg_loss:.4f}",
-            "start_acc": f"{avg_start_acc:.4f}",
-            "end_acc": f"{avg_end_acc:.4f}",
-            "iou_acc": f"{avg_iou_acc:.4f}"
+            "loss_dice": f"{avg_loss_dice:.4f}",
+            "loss_ce": f"{avg_loss_ce:.4f}",
+            "mask_acc": f"{avg_mask_acc:.4f}",
+            "mask_iou": f"{avg_mask_iou:.4f}"
         })
     
     return {
         "loss": total_loss / num_batches,
-        "start_accuracy": total_start_acc / num_batches,
-        "end_accuracy": total_end_acc / num_batches,
-        "iou_accuracy": total_iou_acc / num_batches
+        "mask_accuracy": total_acc / num_batches,
+        "mask_iou": total_iou / num_batches
     }
 
 
@@ -194,9 +195,10 @@ def evaluate(
     """Evaluate the model."""
     model.eval()
     total_loss = 0.0
-    total_start_acc = 0.0
-    total_end_acc = 0.0
-    total_iou_acc = 0.0
+    total_dice_loss = 0.0
+    total_ce_loss = 0.0
+    total_acc = 0.0
+    total_iou = 0.0
     num_batches = len(eval_loader)
     
     progress_bar = tqdm(eval_loader, desc="Evaluating")
@@ -220,46 +222,53 @@ def evaluate(
                 text_attention_mask=batch.get("text_attention_mask"),
                 categories=batch["categories"],
                 point_positions=point_positions,
-                start_labels=batch["start_labels"],
-                end_labels=batch["end_labels"]
+                residue_labels=batch["residue_labels"]
             )
             
             loss = outputs["loss"]
+            dice_loss = outputs["dice_loss"]
+            ce_loss = outputs["ce_loss"]
             
-            # Calculate metrics
-            start_acc = calculate_accuracy(outputs["start_predictions"], batch["start_labels"])
-            end_acc = calculate_accuracy(outputs["end_predictions"], batch["end_labels"])
-            iou_acc = calculate_iou_accuracy(
-                outputs["start_predictions"], 
-                outputs["end_predictions"],
-                batch["start_labels"], 
-                batch["end_labels"]
+            adjusted_mask = batch["protein_attention_mask"][:, 1:-1]
+            
+            # Calculate metrics using unified residue labels
+            mask_acc = calculate_mask_accuracy(
+                outputs["mask_predictions"], 
+                batch["residue_labels"], 
+                adjusted_mask
+            )
+            mask_iou = calculate_mask_iou(
+                outputs["mask_predictions"], 
+                batch["residue_labels"], 
+                adjusted_mask
             )
             
             # Update running averages
             total_loss += loss.item()
-            total_start_acc += start_acc
-            total_end_acc += end_acc
-            total_iou_acc += iou_acc
+            total_dice_loss += dice_loss.item()
+            total_ce_loss += ce_loss.item()
+            total_acc += mask_acc
+            total_iou += mask_iou
             
             # Update progress bar
             avg_loss = total_loss / (batch_idx + 1)
-            avg_start_acc = total_start_acc / (batch_idx + 1)
-            avg_end_acc = total_end_acc / (batch_idx + 1)
-            avg_iou_acc = total_iou_acc / (batch_idx + 1)
+            avg_loss_dice = total_dice_loss / (batch_idx + 1)
+            avg_loss_ce = total_ce_loss / (batch_idx + 1)
+            avg_mask_acc = total_acc / (batch_idx + 1)
+            avg_mask_iou = total_iou / (batch_idx + 1)
             
             progress_bar.set_postfix({
                 "loss": f"{avg_loss:.4f}",
-                "start_acc": f"{avg_start_acc:.4f}",
-                "end_acc": f"{avg_end_acc:.4f}",
-                "iou_acc": f"{avg_iou_acc:.4f}"
+                "loss_dice": f"{avg_loss_dice:.4f}",
+                "loss_ce": f"{avg_loss_ce:.4f}",
+                "mask_acc": f"{avg_mask_acc:.4f}",
+                "mask_iou": f"{avg_mask_iou:.4f}"
             })
     
     return {
         "loss": total_loss / num_batches,
-        "start_accuracy": total_start_acc / num_batches,
-        "end_accuracy": total_end_acc / num_batches,
-        "iou_accuracy": total_iou_acc / num_batches
+        "mask_accuracy": total_acc / num_batches,
+        "mask_iou": total_iou / num_batches
     }
 
 
@@ -267,8 +276,14 @@ def main():
     parser = argparse.ArgumentParser(description="Train ProteinSAM model")
     
     # Model arguments
+    # parser.add_argument("--esm_model_path", type=str, 
+    #                    default="/home/lfj/projects_dir/pretrained_model/esm2_t30_150M_UR50D",
+    #                    help="Path to ESM model")
+    # parser.add_argument("--esm_model_path", type=str, 
+    #                    default="/home/lfj/projects_dir/pretrained_model/models--facebook--esm2_t33_650M_UR50D",
+    #                    help="Path to ESM model")
     parser.add_argument("--esm_model_path", type=str, 
-                       default="/home/lfj/projects_dir/pretrained_model/esm2_t30_150M_UR50D",
+                       default="/home/lfj/projects_dir/pretrained_model/esm2_t36_3B_UR50D",
                        help="Path to ESM model")
     parser.add_argument("--llama_model_path", type=str,
                        default="/home/lfj/projects_dir/pretrained_model/Llama-3.1-8B-Instruct",
@@ -296,11 +311,11 @@ def main():
                        help="Training batch size")
     parser.add_argument("--eval_batch_size", type=int, default=16,
                        help="Evaluation batch size")
-    parser.add_argument("--learning_rate", type=float, default=3e-4,
+    parser.add_argument("--learning_rate", type=float, default=1e-5,
                        help="Learning rate")
-    parser.add_argument("--num_epochs", type=int, default=10,
+    parser.add_argument("--num_epochs", type=int, default=20,
                        help="Number of training epochs")
-    parser.add_argument("--warmup_steps", type=int, default=100,
+    parser.add_argument("--warmup_steps", type=int, default=500,
                        help="Number of warmup steps")
     parser.add_argument("--weight_decay", type=float, default=0.01,
                        help="Weight decay")
@@ -310,15 +325,21 @@ def main():
     # Model architecture arguments
     parser.add_argument("--decoder_num_heads", type=int, default=8,
                        help="Number of attention heads in decoder")
-    parser.add_argument("--decoder_num_layers", type=int, default=4,
+    parser.add_argument("--decoder_num_self_attention_heads", type=int, default=8,
+                       help="Number of self-attention heads in decoder (if None, uses same as decoder_num_heads)")
+    parser.add_argument("--decoder_num_layers", type=int, default=2,
                        help="Number of decoder layers")
-    parser.add_argument("--decoder_intermediate_size", type=int, default=512,
-                       help="Decoder intermediate size")
+    # parser.add_argument("--decoder_intermediate_size", type=int, default=512,
+    #                    help="Decoder intermediate size")  # 150M
+    # parser.add_argument("--decoder_intermediate_size", type=int, default=1280,
+    #                    help="Decoder intermediate size")  # 650M
+    parser.add_argument("--decoder_intermediate_size", type=int, default=2560,
+                       help="Decoder intermediate size")  # 3B
     parser.add_argument("--dropout_rate", type=float, default=0.1,
                        help="Dropout rate")
     
     # Dataset-specific arguments
-    parser.add_argument("--null_position_prob", type=float, default=0.0,
+    parser.add_argument("--null_position_prob", type=float, default=0.3,
                        help="Probability to set position prompt to null")
     parser.add_argument("--random_position_prob", type=float, default=0.0,
                        help="Probability to set random position")
@@ -326,7 +347,7 @@ def main():
                        help="Standard deviation for position noise")
     
     # Other arguments
-    parser.add_argument("--output_dir", type=str, default="./checkpoints_grounding_1018_4layers",
+    parser.add_argument("--output_dir", type=str, default="./checkpoints_grounding_3B",
                        help="Output directory for model checkpoints")
     parser.add_argument("--log_dir", type=str, default="./logs",
                        help="Directory for logs")
@@ -399,6 +420,7 @@ def main():
         "llama_model_path": args.llama_model_path,
         "output_llama_layer": args.output_llama_layer,
         "decoder_num_heads": args.decoder_num_heads,
+        "decoder_num_self_attention_heads": args.decoder_num_self_attention_heads,
         "decoder_num_layers": args.decoder_num_layers,
         "decoder_intermediate_size": args.decoder_intermediate_size,
         "max_sequence_length": args.max_sequence_length,
@@ -421,6 +443,7 @@ def main():
         decoder_num_heads=args.decoder_num_heads,
         decoder_num_layers=args.decoder_num_layers,
         decoder_intermediate_size=args.decoder_intermediate_size,
+        decoder_num_self_attention_heads=args.decoder_num_self_attention_heads,
         max_sequence_length=args.max_sequence_length,
         dropout_rate=args.dropout_rate,
         device=args.device,
@@ -447,7 +470,7 @@ def main():
         scheduler = StepLR(optimizer, step_size=args.num_epochs // 3, gamma=0.1)
     
     # Training loop
-    best_iou_acc = 0.0
+    best_mask_iou = 0.0
     
     for epoch in range(1, args.num_epochs + 1):
         logger.info(f"Starting epoch {epoch}/{args.num_epochs}")
@@ -458,25 +481,23 @@ def main():
         
         # Log training metrics
         logger.info(f"Epoch {epoch} Training - Loss: {train_metrics['loss']:.4f}, "
-                   f"Start Acc: {train_metrics['start_accuracy']:.4f}, "
-                   f"End Acc: {train_metrics['end_accuracy']:.4f}, "
-                   f"IoU Acc: {train_metrics['iou_accuracy']:.4f}")
+                   f"Mask Acc: {train_metrics['mask_accuracy']:.4f}, "
+                   f"Mask IoU: {train_metrics['mask_iou']:.4f}")
         
         # Evaluate
         if eval_loader is not None and epoch % args.eval_every == 0:
             eval_metrics = evaluate(model, eval_loader, args.device, logger)
             
             logger.info(f"Epoch {epoch} Evaluation - Loss: {eval_metrics['loss']:.4f}, "
-                       f"Start Acc: {eval_metrics['start_accuracy']:.4f}, "
-                       f"End Acc: {eval_metrics['end_accuracy']:.4f}, "
-                       f"IoU Acc: {eval_metrics['iou_accuracy']:.4f}")
+                       f"Mask Acc: {eval_metrics['mask_accuracy']:.4f}, "
+                       f"Mask IoU: {eval_metrics['mask_iou']:.4f}")
             
             # Save best model
-            if eval_metrics['iou_accuracy'] > best_iou_acc:
-                best_iou_acc = eval_metrics['iou_accuracy']
+            if eval_metrics['mask_iou'] > best_mask_iou:
+                best_mask_iou = eval_metrics['mask_iou']
                 best_model_path = os.path.join(args.output_dir, "best_model.pt")
                 model.save_model(best_model_path)
-                logger.info(f"New best model saved with IoU accuracy: {best_iou_acc:.4f}")
+                logger.info(f"New best model saved with mask IoU: {best_mask_iou:.4f}")
         
         # Save checkpoint
         if epoch % args.save_every == 0:

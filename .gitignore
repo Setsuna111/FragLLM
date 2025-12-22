@@ -21,6 +21,14 @@ model_grounding_seg/*.log
 model_grounding_seg/dataset_predictions.json
 model_grounding_seg/category_embeddings.pt
 model_grounding_seg/logs/
+model_grounding_clsformer/*.log
+model_grounding_clsformer/category_embeddings.pt
+model_grounding_clsformer/dataset_predictions.json
+model_grounding_clsformer/logs/
+model_grounding_segformer/*.log
+model_grounding_segformer/category_embeddings.pt
+model_grounding_segformer/dataset_predictions.json
+model_grounding_segformer/logs/
 
 
 CLAUDE.md
