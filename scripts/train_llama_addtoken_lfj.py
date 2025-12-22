@@ -32,7 +32,7 @@ from transformers import TrainerCallback, TrainingArguments, TrainerState, Train
 from transformers import EsmModel, LlamaForCausalLM
 from peft import get_peft_model, LoraConfig, PeftModel
 import logging
-from models.protein_llama_addtoken import *
+from models.protein_llama_addtoken_lfj import *
 from dataset.dataloader_referring import FragRefDataset
 from dataset.dataloader_frag import FragDataCollator, make_multitask_dataset
 from transformers.models.auto.modeling_auto import (

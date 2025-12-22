@@ -1,7 +1,7 @@
 import sys
 sys.path.append('.')
 from transformers import AutoTokenizer
-from models.protein_llama_addtoken import ProteinLlamaForCausalLM
+from models.protein_llama_addtoken_lfj import ProteinLlamaForCausalLM
 from dataset.dataloader_grounding import *
 from dataset.dataloader_frag import FragDataCollator
 from dataset.templates import *

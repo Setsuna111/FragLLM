@@ -5,7 +5,7 @@ from torch import Tensor, nn
 from transformers.models.llama import LlamaModel, LlamaForCausalLM, LlamaConfig
 from transformers.generation.utils import GenerateOutput
 from transformers.modeling_outputs import CausalLMOutputWithPast
-from .protein_arch_addtoken import ProteinMetaForCausalLM, ProteinMetaModel
+from .protein_arch_addtoken_lfj import ProteinMetaForCausalLM, ProteinMetaModel
 from transformers import AutoConfig, AutoModelForCausalLM, \
                          Cache
 class ProteinLlamaConfig(LlamaConfig):
