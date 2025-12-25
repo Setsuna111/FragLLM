@@ -509,22 +509,22 @@ def build_frag_dataset(
     return dataset
 
 """Based on ConcatDataset"""
-# def make_multitask_dataset(data_args):
-#     dataset_configs_train = data_args.dataset_train_config.split("||")
-#     dataset_config_train = dataset_configs_train[0] if len(dataset_configs_train) == 1 else dataset_configs_train
-#     train_dataset = build_frag_dataset(dataset_config_train, data_args=data_args, data_split="train")
-#     data_collator = FragDataCollator(
-#         sequence_tokenizer=data_args.sequence_tokenizer,
-#         llm_tokenizer=data_args.llm_tokenizer,
-#         mode="train",
-#         max_sequence_length=data_args.max_sequence_length,
-#     )
-#     dataset_configs_eval = data_args.dataset_valid_config.split("||") if data_args.dataset_valid_config is not None else None
-#     eval_dataset = build_frag_dataset(dataset_configs_eval, data_args=data_args, data_split="valid") if dataset_configs_eval is not None else None
+def make_multitask_dataset_concat(data_args):
+    dataset_configs_train = data_args.dataset_train_config.split("||")
+    dataset_config_train = dataset_configs_train[0] if len(dataset_configs_train) == 1 else dataset_configs_train
+    train_dataset = build_frag_dataset(dataset_config_train, data_args=data_args, data_split="train")
+    data_collator = FragDataCollator(
+        sequence_tokenizer=data_args.sequence_tokenizer,
+        llm_tokenizer=data_args.llm_tokenizer,
+        mode="train",
+        max_sequence_length=data_args.max_sequence_length,
+    )
+    dataset_configs_eval = data_args.dataset_valid_config.split("||") if data_args.dataset_valid_config is not None else None
+    eval_dataset = build_frag_dataset(dataset_configs_eval, data_args=data_args, data_split="valid") if dataset_configs_eval is not None else None
 
-#     return dict(train_dataset=train_dataset,
-#                 eval_dataset=eval_dataset,
-#                 data_collator=data_collator)
+    return dict(train_dataset=train_dataset,
+                eval_dataset=eval_dataset,
+                data_collator=data_collator)
 
 """Based on HybridDatasetBase"""
 def make_multitask_dataset(data_args):
@@ -557,7 +557,7 @@ def make_multitask_dataset(data_args):
 class FragDataArguments:
     """Data arguments for fragment training."""
     root_dir: Optional[str] = field(default="./data", metadata={"help": "Root directory for datasets"})
-    dataset_train_config: Optional[str] = field(default="ProFunction||ActRefClass||BindIRefClass||DomRefClass||EvoRefClass||MotifRefClass", metadata={"help": "Dataset config for training"})
+    dataset_train_config: Optional[str] = field(default="ProFunction||ActRefClass||BindIRefClass||DomRefClass||EvoRefClass||MotifRefClass||ActRefDesc||BindIRefDesc||DomRefDesc||EvoRefDesc||MotifRefDesc||ActGroundSingle||BindIGroundSingle||DomGroundSingle||EvoGroundSingle||MotifGroundSingle||ActGroundGroup||BindIGroundGroup||DomGroundGroup||EvoGroundGroup||MotifGroundGroup", metadata={"help": "Dataset config for training"})
     sample_rate_train: Optional[str] = field(default="1,1,1,1,1,1", metadata={"help": "Sample rate for training"})
     dataset_valid_config: Optional[str] = field(default="ProFunction", metadata={"help": "Dataset config for evaluation"})
     sample_rate_valid: Optional[str] = field(default="1", metadata={"help": "Sample rate for evaluation"})
@@ -584,8 +584,8 @@ if __name__ == "__main__":
     data_args = FragDataArguments()
     data_args.sequence_tokenizer = AutoTokenizer.from_pretrained(data_args.sequence_tokenizer_path)
     data_args.llm_tokenizer = AutoTokenizer.from_pretrained(data_args.llm_tokenizer_path,pad_token='<|reserved_special_token_0|>')
-    data_module = make_multitask_dataset(data_args)
-    # import pdb; pdb.set_trace()
+    data_module = make_multitask_dataset_concat(data_args)
+    import pdb; pdb.set_trace()
     train_dataloader = DataLoader(
         data_module["train_dataset"],
         batch_size=4,

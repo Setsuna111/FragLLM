@@ -398,7 +398,7 @@ class ProteinLlamaForCausalLM(LlamaForCausalLM, ProteinMetaForCausalLM):
                         protein_hidden_states = adapter_output[i][encoder_attention_mask[i].bool()][1:-1] #(num_proteins, 4096)
                         # protein_hidden_states = encoder_output[0][i][encoder_attention_mask[i].bool()][1:-1] #(num_proteins, 4096)
                         position_grds_pred.append(self.get_model().fragment_position_decoder(postoken_hidden_states.unsqueeze(1).contiguous(), protein_hidden_states.unsqueeze(0).expand(postoken_hidden_states.shape[0], -1, -1).contiguous()).squeeze(1))
-                    # """0, 1分类"""
+                        # """0, 1分类"""
                     else:
                         position_grds_pred.append(None)
             else:
