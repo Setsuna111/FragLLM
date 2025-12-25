@@ -1,3 +1,7 @@
+25-1225 djy
+1. 合并了分类定位和分割定位两种方式的dataset部分，不同方式的conversation构建用model_type区分
+
+
 1222 lfj
 1. 增加prot2text权重load代码，加载adapter和llama的非embedding、lmhead权重。
     这里load的时候会分两部分加载，先加载llama权重，再加载adapter权重。当然这样分块儿加载后llama embedding和lmhead也可以同时读入

@@ -92,6 +92,7 @@ class FragGroundingSingle(FragRefDataset):
             task_type: str,
             max_sequence_length: Optional[int] = 1021,
             use_detailed_template: bool = False,
+            model_type: str = "segment",
             **kwargs,
             ):
         super().__init__(
@@ -102,6 +103,7 @@ class FragGroundingSingle(FragRefDataset):
             max_sequence_length=max_sequence_length, 
             **kwargs,
             )
+        self.model_type = model_type
         self.use_detailed_template = use_detailed_template
         self.data_infos = self._filter_grounding(self.data_infos)
 
@@ -138,7 +140,7 @@ class FragGroundingSingle(FragRefDataset):
                 data_infos.append(data_item)
         return data_infos
     
-    def create_conversations(self, sequence, answer, position_grd):
+    def create_conversations_seg(self, sequence, answer, position_grd):
         # Choose question template based on detailed template setting
         if self.use_detailed_template:
             question_template = random.choice(Frag_Ground_Single_Detailed)
@@ -193,6 +195,61 @@ class FragGroundingSingle(FragRefDataset):
         # print(answer)
 
         return conversation, answer
+    
+    def create_conversations_class(self, sequence, answer, position_grd):
+        # Choose question template based on detailed template setting
+        if self.use_detailed_template:
+            question_template = random.choice(Frag_Ground_Single_Detailed)
+            answer_template = random.choice(Grounding_Answer_Single_Detailed)
+        else:
+            question_template = random.choice(self.question_template)
+            answer_template = random.choice(self.answer_template) if self.answer_template is not None else None
+            
+        conversation = [
+            {"role": "system", "content": self.system_message},
+            {"role": "user", "content": question_template.format(full_sequence=self.sequence_placeholder * (len(sequence)+2), N=len(sequence), class_name=answer)
+             }
+        ]
+        
+        if self.use_detailed_template:
+            # New detailed template format
+            region_count = len(position_grd[0])
+            detailed_positions = []
+            
+            for i, (start, end) in enumerate(position_grd[0]):
+                region_num = i + 1
+                position_placeholder =  f"({self.pos_start_placeholder}, {self.pos_end_placeholder})"
+                detailed_position = f"region {region_num} lies within {position_placeholder}"
+                detailed_positions.append(detailed_position)
+            
+            # Join with appropriate connectors
+            if len(detailed_positions) == 1:
+                detailed_positions_str = detailed_positions[0]
+            elif len(detailed_positions) == 2:
+                detailed_positions_str = f"{detailed_positions[0]} and {detailed_positions[1]}"
+            else:
+                detailed_positions_str = ", ".join(detailed_positions[:-1]) + f", and {detailed_positions[-1]}"
+            
+            answer = answer_template.format(
+                class_name=answer, 
+                region_count=region_count,
+                detailed_positions=f"{self.phrase_start_placeholder}{answer}:{detailed_positions_str}{self.phrase_end_placeholder}"
+            )
+        else:
+            # Original template format
+            position = ""
+            for i, (start, end) in enumerate(position_grd[0]):
+                position_placeholder =  f"({self.pos_start_placeholder}, {self.pos_end_placeholder})"
+                if i < len(position_grd[0]) - 2:
+                    position += ","
+                elif i == len(position_grd[0]) - 2:
+                    position += " and "
+            position = f"{self.phrase_start_placeholder}{answer}:{position}{self.phrase_end_placeholder}"
+            answer = answer_template.format(class_name=answer, position=position)
+        
+        # print(answer)
+
+        return conversation, answer
 
     def sort_position(self, position_grd):
         position_grd.sort(key=lambda x: x[0])
@@ -221,7 +278,12 @@ class FragGroundingSingle(FragRefDataset):
             position_grd = [[[start_pos, end_pos+1] for start_pos, end_pos in zip(start_pos_list, end_pos_list)]]
         # 将片段按初始位置排序
         position_grd[0] = self.sort_position(position_grd[0])
-        conversation, answer = self.create_conversations(sequence, answer, position_grd)
+        if self.model_type == "segment":
+            conversation, answer = self.create_conversations_seg(sequence, answer, position_grd)
+        elif self.model_type == "class":
+            conversation, answer = self.create_conversations_class(sequence, answer, position_grd)
+        else:
+            raise NotImplementedError(f"Model type {self.model_type} not implemented.")
         position_ref = None
         return {
                 "sequence": sequence,
@@ -244,6 +306,7 @@ class DomainGroundingSingle(FragGroundingSingle):
             split: str, 
             max_sequence_length: Optional[int] = 1021,
             use_detailed_template: bool = False,
+            model_type: str = "segment",
             **kwargs,
             ):
         data_name = "VenusX_Dom"
@@ -268,6 +331,7 @@ class ActGroundingSingle(FragGroundingSingle):
             split: str, 
             max_sequence_length: Optional[int] = 1021,
             use_detailed_template: bool = False,
+            model_type: str = "segment",
             **kwargs,
             ):
         data_name = "VenusX_Act"
@@ -292,6 +356,7 @@ class BindIGroundingSingle(FragGroundingSingle):
             split: str, 
             max_sequence_length: Optional[int] = 1021,
             use_detailed_template: bool = False,
+            model_type: str = "segment",
             **kwargs,
             ):
         data_name = "VenusX_BindI"
@@ -316,6 +381,7 @@ class MotifGroundingSingle(FragGroundingSingle):
             split: str, 
             max_sequence_length: Optional[int] = 1021,
             use_detailed_template: bool = False,
+            model_type: str = "segment",
             **kwargs,
             ):
         data_name = "VenusX_Motif"
@@ -341,6 +407,7 @@ class EvoGroundingSingle(FragGroundingSingle):
             split: str, 
             max_sequence_length: Optional[int] = 1021,
             use_detailed_template: bool = False,
+            model_type: str = "segment",
             **kwargs,
             ):
         data_name = "VenusX_Evo"
@@ -369,6 +436,7 @@ class FragGroundingGroup(FragRefDataset):
             task_type: str,
             max_sequence_length: Optional[int] = 1021,
             use_detailed_template: bool = False,
+            model_type: str = "segment",
             **kwargs,
             ):
         super().__init__(
@@ -379,6 +447,7 @@ class FragGroundingGroup(FragRefDataset):
             max_sequence_length=max_sequence_length, 
             **kwargs,
             )
+        self.model_type = model_type
         self.use_detailed_template = use_detailed_template
         self.data_infos = self._filter_grounding(self.data_infos)
 
@@ -412,33 +481,8 @@ class FragGroundingGroup(FragRefDataset):
                 data_infos.append(data_item)
         return data_infos
     
-    # def create_conversations(self, sequence, answer, position_grd):
-    #     question_template = random.choice(self.question_template)
-    #     answer_template = random.choice(self.answer_template) if self.answer_template is not None else None
-    #     conversation = [
-    #         {"role": "system", "content": self.system_message},
-    #         {"role": "user", "content": question_template.format(full_sequence=self.sequence_placeholder * (len(sequence)+2), N=len(sequence), task_name=self.task_name_map[self.data_name])
-    #          }
-    #     ]
-    #     answer_i = ""
-    #     for j in range(len(answer)):
-    #         position = ""
-    #         for i, (start, end) in enumerate(position_grd[j]):
-    #             # position +=  f"{self.pos_start_placeholder}({start},{end}){self.pos_end_placeholder}"
-    #             position +=  f"({start},{end})"
-    #             if i < len(position_grd[j]) - 2:
-    #                 position += ", "
-    #             elif i == len(position_grd[j]) - 2:
-    #                 position += " and "
-    #         answer_i += f"{answer[j]} at {position}"
-    #         if j < len(answer) - 1:
-    #             answer_i += "; "
-    #         # elif j == len(answer) - 2:
-    #         #     answer_i += " and "      
-    #     answer = answer_template.format(task_name=self.task_name_map[self.data_name], contents=answer_i)
-    #     return conversation, answer
 
-    def create_conversations(self, sequence, answer, position_grd):
+    def create_conversations_seg(self, sequence, answer, position_grd):
         # Choose question template based on detailed template setting
         if self.use_detailed_template:
             question_template = random.choice(Frag_Ground_Group_Detailed)
@@ -513,6 +557,82 @@ class FragGroundingGroup(FragRefDataset):
         # print(answer)
 
         return conversation, answer
+    
+    def create_conversations_class(self, sequence, answer, position_grd):
+        # Choose question template based on detailed template setting
+        if self.use_detailed_template:
+            question_template = random.choice(Frag_Ground_Group_Detailed)
+            answer_template = random.choice(Grounding_Answer_Group_Detailed)
+        else:
+            question_template = random.choice(Frag_Ground_Group)
+            answer_template = random.choice(Grounding_Answer_Group)
+        
+        conversation = [
+            {"role": "system", "content": self.system_message},
+            {"role": "user", "content": question_template.format(full_sequence=self.sequence_placeholder * (len(sequence)+2), N=len(sequence), task_name=self.task_name_map[self.data_name])
+             }
+        ]
+        
+        if self.use_detailed_template:
+            # Detailed template format for group grounding
+            category_details = []
+            
+            for j in range(len(answer)):
+                category_name = answer[j]
+                instance_count = len(position_grd[j])
+                
+                # Build position list for this category
+                positions_for_category = []
+                for i, (start, end) in enumerate(position_grd[j]):
+                    region_num = i + 1
+                    position_placeholder = f"({self.pos_start_placeholder}, {self.pos_end_placeholder})"
+                    position_info = f"region {region_num} lies within {position_placeholder}"
+                    positions_for_category.append(position_info)
+                
+                # Join positions with appropriate connectors
+                if len(positions_for_category) == 1:
+                    positions_str = positions_for_category[0]
+                elif len(positions_for_category) == 2:
+                    positions_str = f"{positions_for_category[0]} and {positions_for_category[1]}"
+                else:
+                    positions_str = ", ".join(positions_for_category[:-1]) + f", and {positions_for_category[-1]}"
+                
+                # Format: "CategoryName (X instances): position details"
+                # category_detail = f"{category_name} ({instance_count} instance{'s' if instance_count > 1 else ''}): {positions_str}"
+                category_detail = f"{self.phrase_start_placeholder}{category_name}:{positions_str}{self.phrase_end_placeholder}"  # 1015 change as the whold info outside
+                category_details.append(category_detail)
+            
+            # Join all categories
+            if len(category_details) == 1:
+                contents = category_details[0]
+            elif len(category_details) == 2:
+                contents = f"{category_details[0]}; {category_details[1]}"
+            else:
+                contents = "; ".join(category_details[:-1]) + f"; {category_details[-1]}"
+            
+            answer = answer_template.format(task_name=self.task_name_map[self.data_name], contents=contents)
+        else:
+            # Original template format
+            answer_i = ""
+            for j in range(len(answer)):
+                position = ""
+                for i, (start, end) in enumerate(position_grd[j]):
+                    # Only use start token for ProteinSAM (as requested) 
+                    position +=  f"({self.pos_start_placeholder}, {self.pos_end_placeholder})"
+                    if i < len(position_grd[j]) - 2:
+                        position += ", "
+                    elif i == len(position_grd[j]) - 2:
+                        position += " and "
+                answer_i += f"{self.phrase_start_placeholder}{answer[j]}:{position}{self.phrase_end_placeholder}"
+                if j < len(answer) - 2:
+                    answer_i += "; "
+                elif j == len(answer) - 2:
+                    answer_i += " and "      
+            answer = answer_template.format(task_name=self.task_name_map[self.data_name], contents=answer_i)
+        
+        # print(answer)
+
+        return conversation, answer
 
     def sort_position(self, position_grd):
         position_grd.sort(key=lambda x: x[0])
@@ -545,7 +665,12 @@ class FragGroundingGroup(FragRefDataset):
             # position_grd.append([[frag_item["start_position"]-start, frag_item["end_position"]-start+1] for frag_item in frag["frags"]])
             position_temp = [[frag_item["start_position"]-start, frag_item["end_position"]-start+1] for frag_item in frag["frags"]]
             position_grd.append(self.sort_position(position_temp))
-        conversation, answer = self.create_conversations(sequence, answer_list, position_grd)
+        if self.model_type == "segment":
+            conversation, answer = self.create_conversations_seg(sequence, answer_list, position_grd)
+        elif self.model_type == "class":
+             conversation, answer = self.create_conversations_class(sequence, answer_list, position_grd)
+        else:
+            raise NotImplementedError(f"Model type {self.model_type} not implemented.")
         position_ref = None
         return {
                 "sequence": sequence,
@@ -569,6 +694,7 @@ class DomainGroundingGroup(FragGroundingGroup):
             split: str, 
             max_sequence_length: Optional[int] = 1021,
             use_detailed_template: bool = False,
+            model_type: str = "segment",
             **kwargs,
             ):
         data_name = "VenusX_Dom"
@@ -590,6 +716,7 @@ class ActGroundingGroup(FragGroundingGroup):
             split: str, 
             max_sequence_length: Optional[int] = 1021,
             use_detailed_template: bool = False,
+            model_type: str = "segment",
             **kwargs,
             ):
         data_name = "VenusX_Act"
@@ -611,6 +738,7 @@ class BindIGroundingGroup(FragGroundingGroup):
             split: str, 
             max_sequence_length: Optional[int] = 1021,
             use_detailed_template: bool = False,
+            model_type: str = "segment",
             **kwargs,
             ):
         data_name = "VenusX_BindI"
@@ -631,6 +759,7 @@ class MotifGroundingGroup(FragGroundingGroup):
             split: str, 
             max_sequence_length: Optional[int] = 1021,
             use_detailed_template: bool = False,
+            model_type: str = "segment",
             **kwargs,
             ):
         data_name = "VenusX_Motif"
@@ -651,6 +780,7 @@ class EvoGroundingGroup(FragGroundingGroup):
             split: str, 
             max_sequence_length: Optional[int] = 1021,
             use_detailed_template: bool = False,
+            model_type: str = "segment",
             **kwargs,
             ):
         data_name = "VenusX_Evo"

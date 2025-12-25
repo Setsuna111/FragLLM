@@ -98,6 +98,8 @@ class FragRefDataset(torch.utils.data.Dataset):
             sequence_placeholder: str = '<|reserved_special_token_1|>',
             fragment_placeholder: str = '<|reserved_special_token_2|>',
             position_placeholder: str = '<frag_position>',
+            pos_start_placeholder: str = '<frag_start>',
+            pos_end_placeholder: str = '<frag_end>',
             phrase_start_placeholder: str = '<p>',
             phrase_end_placeholder: str = '</p>',
             perceiver_latent_size: int = 1,
@@ -122,6 +124,10 @@ class FragRefDataset(torch.utils.data.Dataset):
             self.fragment_placeholder = fragment_placeholder
 
         self.position_placeholder = position_placeholder
+        # DONE: Use for classification grounding
+        self.pos_start_placeholder = pos_start_placeholder
+        self.pos_end_placeholder = pos_end_placeholder
+        
         self.phrase_start_placeholder = phrase_start_placeholder
         self.phrase_end_placeholder = phrase_end_placeholder
         
