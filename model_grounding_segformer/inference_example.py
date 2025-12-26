@@ -5,7 +5,7 @@ Loads model and runs inference on specified test datasets with llama cache suppo
 import os
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 import torch
-from protein_sam import ProteinSAM
+from .protein_sam import ProteinSAM
 from dataset import get_datasets_and_collator
 from torch.utils.data import DataLoader
 import argparse

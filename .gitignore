@@ -27,6 +27,7 @@ model_grounding_segformer/*.log
 model_grounding_segformer/category_embeddings.pt
 model_grounding_segformer/dataset_predictions.json
 model_grounding_segformer/logs/
+model_grounding_segformer/checkpoints_grounding_3B/
 
 
 CLAUDE.md

@@ -20,7 +20,7 @@ from datetime import datetime
 import logging
 
 from protein_sam import ProteinSAM
-from dataset import get_datasets_and_collator
+from .dataset import get_datasets_and_collator
 
 
 def set_seed(seed: int = 42):

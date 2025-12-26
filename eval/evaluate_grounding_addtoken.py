@@ -2,6 +2,7 @@ import sys
 sys.path.append('.')
 from transformers import AutoTokenizer
 from models.protein_llama_addtoken_lfj import ProteinLlamaForCausalLM
+from models.protein_llama_addtoken_djy import ProteinLlamaForCausalLM_Simple
 from dataset.dataloader_grounding import *
 from dataset.dataloader_frag import FragDataCollator
 from dataset.templates import *
@@ -105,10 +106,14 @@ def parse_args():
 
     # data
     parser.add_argument('--use_detailed_template', action='store_true', help='use detailed templates for grounding evaluation')
+
+    # model_type
+    parser.add_argument('--pos_decoder_type', default="ProteinSAM", help='type of position decoder to use')
+    
     
     return parser.parse_args()
 
-def create_dataset(dataset_name, root_dir, split, use_detailed_template, max_sequence_length=1021):
+def create_dataset(dataset_name, root_dir, split, use_detailed_template, pos_decoder_type, max_sequence_length=1021):
     print(f"Creating dataset {dataset_name} with use_detailed_template={use_detailed_template}")
     """Create dataset based on dataset name"""
     if dataset_name in GROUNDING_DATASETS:
@@ -117,21 +122,24 @@ def create_dataset(dataset_name, root_dir, split, use_detailed_template, max_seq
             root_dir=root_dir,
             split=split,
             max_sequence_length=max_sequence_length,
-            use_detailed_template=use_detailed_template  # 0918 test
+            use_detailed_template=use_detailed_template,
+            pos_decoder_type=pos_decoder_type
         )
         print(f"Dataset created successfully. Dataset.use_detailed_template={dataset.use_detailed_template}")
         return dataset
     else:
         raise ValueError(f"Unknown dataset: {dataset_name}. "
                         f"Available datasets: {list(GROUNDING_DATASETS.keys())}")
-    
+
+
+# NOTE: for ProteinSAM addtoken grounding evaluation
 def evaluate_dataset(dataset_name, model, tokenizer, data_collator, 
                     args, device, save_results_path):
     """Evaluate a single dataset"""
     print(f"\n=== Evaluating {dataset_name} dataset ===")
     
     # Create dataset
-    eval_dataset = create_dataset(dataset_name, args.root_dir, args.split, args.use_detailed_template)
+    eval_dataset = create_dataset(dataset_name, args.root_dir, args.split, args.use_detailed_template, args.pos_decoder_type)
     print(f'Dataset {dataset_name} loaded with {len(eval_dataset)} samples')
     
     # Create dataloader
@@ -298,6 +306,173 @@ def evaluate_dataset(dataset_name, model, tokenizer, data_collator,
     
     return len(generated)  # Return local count for progress tracking
 
+
+# NOTE: for simple decoder grounding evaluation
+def evaluate_dataset_simple(dataset_name, model, tokenizer, data_collator, args, device, save_results_path):
+    """Evaluate a single dataset"""
+    print(f"\n=== Evaluating {dataset_name} dataset ===")
+    
+    # Create dataset
+    eval_dataset = create_dataset(dataset_name, args.root_dir, args.split, args.use_detailed_template, args.pos_decoder_type)
+    print(f'Dataset {dataset_name} loaded with {len(eval_dataset)} samples')
+    
+    # Create dataloader
+    if args.single_gpu:
+        # Single GPU mode
+        dataloader = DataLoader(eval_dataset, batch_size=args.batch_per_device, 
+                              num_workers=0, shuffle=False, collate_fn=data_collator)
+    else:
+        # Multi-GPU mode
+        distributed_sampler = DistributedSampler(eval_dataset, rank=args.rank, shuffle=False, drop_last=False)
+        dataloader = DataLoader(eval_dataset, batch_size=args.batch_per_device, 
+                              num_workers=0, sampler=distributed_sampler, collate_fn=data_collator)
+        print("DEBUG:", list(distributed_sampler))  # 0904 debug
+    # Clean existing results file (only on rank 0 or single GPU mode)
+    should_clean_file = args.single_gpu or (torch.distributed.is_initialized() and torch.distributed.get_rank() == 0)
+    if should_clean_file and os.path.exists(save_results_path):
+        os.remove(save_results_path)
+        print(f"Removed existing results file: {save_results_path}")
+    
+    generated = []
+    references = []
+    dataset_idx_list = []
+    gt_position_grds = []
+    pred_position_grds = []
+    pattern = re.compile(r'\(\s*\<frag_start\>\s*,\s*\<frag_end\>\s*\)')
+    print(f"Starting evaluation on {dataset_name}...")
+    for inputs in tqdm(dataloader, desc=f"Evaluating {dataset_name}"):
+        # Extract reference answers
+        answers_gt = tokenizer.batch_decode(inputs['answer_input_ids'])
+        answers_gt_replace = []
+        for i, answer_gt in enumerate(answers_gt):
+            position_grds = list_nested_elements_recursive(inputs['position_grds'][i])
+            position_grds = list(zip(position_grds[::2], position_grds[1::2]))
+            gt_position_grds.append(position_grds)
+            # Extract answer_gt中的(<frag_start>,<frag_end>)或者(<frag_start>, <frag_end>)元素
+            answer_gt_replace = replace_matches_sequentially(answer_gt, pattern, position_grds)
+            answers_gt_replace.append(answer_gt_replace.replace("<|reserved_special_token_0|>", "").replace("<|eot_id|>", ""))
+        references += answers_gt_replace
+        
+        # Move inputs to device
+        inputs = {k: v.to(device=device, non_blocking=True) if hasattr(v, 'to') else v 
+                 for k, v in inputs.items()}
+        
+        dataset_idx_list += inputs.get('dataset_idxs', [None]*inputs['input_ids'].size(0))
+
+        # Generate responses
+        with torch.no_grad():
+            tok_ids, position_grds_pred = model.generate(
+                inputs=None,
+                input_ids=inputs["input_ids"],
+                attention_mask=inputs["attention_mask"],
+                protein_input_ids=inputs["protein_input_ids"],
+                protein_attention_mask=inputs["protein_attention_mask"],
+                protein_inputs_embeds=None,
+                position_refs=inputs["position_refs"],
+                grounding_inference=True,
+                num_beams=1,
+                early_stopping=False,
+                no_repeat_ngram_size=None,
+                length_penalty=1.0,
+                eos_token_id=128009, 
+                pad_token_id=128002,
+                do_sample=True if args.temperature > 0 else False,
+                temperature=args.temperature,
+                max_new_tokens=512,
+                use_cache=True
+            )
+
+        answers_pred = tokenizer.batch_decode(tok_ids)
+        answers_pred_replace = []
+        for i, answer_pred in enumerate(answers_pred):
+            position_grd_pred = list(zip(position_grds_pred[i][::2], position_grds_pred[i][1::2]))
+            pred_position_grds.append(position_grd_pred)
+            answer_pred_replace = replace_matches_sequentially(answer_pred, pattern, position_grd_pred)
+            answers_pred_replace.append(answer_pred_replace.replace("<|reserved_special_token_0|>", "").replace("<|eot_id|>", ""))
+        generated += answers_pred_replace
+    
+    # Handle multi-GPU result collection
+    if args.single_gpu:
+        # Single GPU mode: directly save results
+        data = {
+            'generated': generated,
+            'reference': references,
+            'dataset_idx': dataset_idx_list,
+            'gt_positions': gt_position_grds,
+            'pred_positions': pred_position_grds
+        }
+        df = pd.DataFrame(data)
+        df.to_csv(save_results_path, index=False)
+        total_samples = len(generated)
+    else:
+        # Multi-GPU mode: collect results from all GPUs
+        if torch.distributed.is_initialized():
+            # Save partial results with rank suffix first
+            partial_save_path = save_results_path.replace('.csv', f'_rank{args.rank}.csv')
+            data = {
+                'generated': generated,
+                'reference': references,
+                'dataset_idx': dataset_idx_list,
+                'gt_positions': gt_position_grds,
+                'pred_positions': pred_position_grds
+            }
+            df = pd.DataFrame(data)
+            df.to_csv(partial_save_path, index=False)
+            
+            # Wait for all processes to finish saving partial results
+            torch.distributed.barrier()
+            
+            # Only rank 0 merges all results
+            if torch.distributed.get_rank() == 0:
+                print(f"Rank 0: Merging results from all GPUs...")
+                all_data = {'generated': [], 'reference': [], 'dataset_idx': [], 'gt_positions': [], 'pred_positions': []}
+                
+                # Collect results from all ranks
+                for rank in range(args.world_size):
+                    rank_file = save_results_path.replace('.csv', f'_rank{rank}.csv')
+                    if os.path.exists(rank_file):
+                        rank_df = pd.read_csv(rank_file)
+                        all_data['generated'].extend(rank_df['generated'].tolist())
+                        all_data['reference'].extend(rank_df['reference'].tolist())
+                        all_data['dataset_idx'].extend(rank_df['dataset_idx'].tolist())
+                        all_data['gt_positions'].extend(rank_df['gt_positions'].tolist())
+                        all_data['pred_positions'].extend(rank_df['pred_positions'].tolist())
+                        # Clean up partial file
+                        os.remove(rank_file)
+
+                # Save merged results
+                merged_df = pd.DataFrame(all_data)
+                # drop duplicates based on dataset_idx
+                merged_df = merged_df.drop_duplicates(subset=['dataset_idx'], keep='first')
+                merged_df.to_csv(save_results_path, index=False)
+                total_samples = len(all_data['generated'])
+                print(f"Merged results from {args.world_size} GPUs: {total_samples} total samples")
+            
+            # All processes wait for merging to complete
+            torch.distributed.barrier()
+            if torch.distributed.get_rank() == 0:
+                total_samples = len(all_data['generated']) if 'all_data' in locals() else len(generated)
+            else:
+                total_samples = len(generated)  # Local count for return value
+        else:
+            # Fallback to single GPU behavior if distributed not initialized
+            data = {
+                'generated': generated,
+                'reference': references,
+                'dataset_idx': dataset_idx_list,
+                'gt_positions': gt_position_grds,
+                'pred_positions': pred_position_grds
+            }
+            df = pd.DataFrame(data)
+            df.to_csv(save_results_path, index=False)
+            total_samples = len(generated)
+    
+    if args.single_gpu or (torch.distributed.is_initialized() and torch.distributed.get_rank() == 0):
+        print(f"Results saved to {save_results_path}")
+        print(f"Generated {total_samples} responses for {dataset_name} dataset")
+    
+    return len(generated)  # Return local count for progress tracking
+
 def main():
     args = parse_args()
 
@@ -330,13 +505,12 @@ def main():
     # Load model and tokenizers
     print("Loading model and tokenizers...")
     tokenizer = AutoTokenizer.from_pretrained(args.model_path, pad_token='<|reserved_special_token_0|>')
-    model = ProteinLlamaForCausalLM.from_pretrained(args.model_path)
+    if args.pos_decoder_type == "ProteinSAM":
+        model = ProteinLlamaForCausalLM.from_pretrained(args.model_path)
+    else:
+        model = ProteinLlamaForCausalLM_Simple.from_pretrained(args.model_path)
     model.config.pad_token_id = tokenizer.pad_token_id
     sequence_tokenizer = AutoTokenizer.from_pretrained(model.config.esm_path)
-    
-    # Set position placeholder ID for grounding inference
-    model.config.position_placeholder_id = 128256  # Use the addtoken position placeholder ID
-    print(f"Position placeholder ID set to: {model.config.position_placeholder_id}")
     
     model.eval()
     model = model.bfloat16().to(device)
@@ -378,10 +552,16 @@ def main():
         else:
             save_results_path = os.path.join(args.save_results_dir, f"{dataset_name}_results.csv")
         
-        samples_count = evaluate_dataset(
-            dataset_name, model, tokenizer, 
-            data_collator, args, device, save_results_path
-        )
+        if args.pos_decoder_type == "ProteinSAM":
+            samples_count = evaluate_dataset(
+                dataset_name, model, tokenizer, 
+                data_collator, args, device, save_results_path
+            )
+        else:
+            samples_count = evaluate_dataset_simple(
+                dataset_name, model, tokenizer, 
+                data_collator, args, device, save_results_path
+            )
     
     print(f"\n=== Evaluation Complete ===")
     print(f"Total datasets evaluated: {len(dataset_list)}")

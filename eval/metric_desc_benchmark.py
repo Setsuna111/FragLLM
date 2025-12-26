@@ -14,7 +14,6 @@ import evaluate
 from transformers import BertTokenizer, RobertaTokenizer
 import scripts.utils_argparse as utils_argparse
 
-
 argParser = argparse.ArgumentParser()
 argParser.add_argument("--results_path", type=str, help="path to save the generated description")
 argParser.add_argument("--evaluate_exact_match", type=utils_argparse.str2bool)

@@ -1,6 +1,12 @@
-25-1225 djy
-1. 合并了分类定位和分割定位两种方式的dataset部分，不同方式的conversation构建用model_type区分
-
+25-1226 djy
+1. 引入了pos_decoder_type("ProteinSAM" or "Simple")参数区分ProteinSAM decoder和Simple decoder两种架构方式
+2. grounding任务构建conversation时，区分了create_conversation_sam(for protein_sam)和create_conversation_class(for simple decoder)
+3. 修改了model_grounding_segformer导入函数的形式（如protein_sam.py中from .protein_encoder import ProteinEncoder）
+4. 新增了protein_arch_addtoken_djy和protein_llama_addtoken_djy，基于simple decoder的架构
+5. 新增了scripts/train_llama_addtoken.py，通过传入pos_decoder_type加载不同架构的模型进行训练
+6. 调整了models/protein_arch_addtoken_lfj.py中load_protein_sam_params_with_overrides函数，新增了esm_model_path传参，确保初始化ProteinSAM时，ESM的路径与FragLLM中的路径保持一致，不受protein_sam_init_params.json中参数值的影响
+7. 统一了eval，其中evaluate用来生成结果文件，metric文件用来计算指标结果。metric_grounding任务中，多positions匹配方式由中心距离匹配替换为了iou匹配
+8. 新增了scripts/utils_argparse.py文件
 
 1222 lfj
 1. 增加prot2text权重load代码，加载adapter和llama的非embedding、lmhead权重。

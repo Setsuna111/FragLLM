@@ -92,7 +92,7 @@ class FragGroundingSingle(FragRefDataset):
             task_type: str,
             max_sequence_length: Optional[int] = 1021,
             use_detailed_template: bool = False,
-            model_type: str = "segment",
+            pos_decoder_type: str = "ProteinSAM",
             **kwargs,
             ):
         super().__init__(
@@ -103,7 +103,7 @@ class FragGroundingSingle(FragRefDataset):
             max_sequence_length=max_sequence_length, 
             **kwargs,
             )
-        self.model_type = model_type
+        self.pos_decoder_type = pos_decoder_type
         self.use_detailed_template = use_detailed_template
         self.data_infos = self._filter_grounding(self.data_infos)
 
@@ -278,12 +278,12 @@ class FragGroundingSingle(FragRefDataset):
             position_grd = [[[start_pos, end_pos+1] for start_pos, end_pos in zip(start_pos_list, end_pos_list)]]
         # 将片段按初始位置排序
         position_grd[0] = self.sort_position(position_grd[0])
-        if self.model_type == "segment":
+        if self.pos_decoder_type == "ProteinSAM":
             conversation, answer = self.create_conversations_seg(sequence, answer, position_grd)
-        elif self.model_type == "class":
+        elif self.pos_decoder_type == "Simple":
             conversation, answer = self.create_conversations_class(sequence, answer, position_grd)
         else:
-            raise NotImplementedError(f"Model type {self.model_type} not implemented.")
+            raise NotImplementedError(f"Model type {self.pos_decoder_type} not implemented.")
         position_ref = None
         return {
                 "sequence": sequence,
@@ -306,7 +306,7 @@ class DomainGroundingSingle(FragGroundingSingle):
             split: str, 
             max_sequence_length: Optional[int] = 1021,
             use_detailed_template: bool = False,
-            model_type: str = "segment",
+            pos_decoder_type: str = "ProteinSAM",
             **kwargs,
             ):
         data_name = "VenusX_Dom"
@@ -320,6 +320,7 @@ class DomainGroundingSingle(FragGroundingSingle):
             task_type=task_type, 
             max_sequence_length=max_sequence_length,
             use_detailed_template=use_detailed_template,
+            pos_decoder_type=pos_decoder_type,
             question_template=question_template,
             answer_template=answer_template,
             **kwargs,
@@ -331,7 +332,7 @@ class ActGroundingSingle(FragGroundingSingle):
             split: str, 
             max_sequence_length: Optional[int] = 1021,
             use_detailed_template: bool = False,
-            model_type: str = "segment",
+            pos_decoder_type: str = "ProteinSAM",
             **kwargs,
             ):
         data_name = "VenusX_Act"
@@ -345,6 +346,7 @@ class ActGroundingSingle(FragGroundingSingle):
             task_type=task_type, 
             max_sequence_length=max_sequence_length,
             use_detailed_template=use_detailed_template,
+            pos_decoder_type=pos_decoder_type,
             question_template=question_template,
             answer_template=answer_template,
             **kwargs,
@@ -356,7 +358,7 @@ class BindIGroundingSingle(FragGroundingSingle):
             split: str, 
             max_sequence_length: Optional[int] = 1021,
             use_detailed_template: bool = False,
-            model_type: str = "segment",
+            pos_decoder_type: str = "ProteinSAM",
             **kwargs,
             ):
         data_name = "VenusX_BindI"
@@ -370,6 +372,7 @@ class BindIGroundingSingle(FragGroundingSingle):
             task_type=task_type, 
             max_sequence_length=max_sequence_length,
             use_detailed_template=use_detailed_template,
+            pos_decoder_type=pos_decoder_type,
             question_template=question_template,
             answer_template=answer_template,
             **kwargs,
@@ -381,7 +384,7 @@ class MotifGroundingSingle(FragGroundingSingle):
             split: str, 
             max_sequence_length: Optional[int] = 1021,
             use_detailed_template: bool = False,
-            model_type: str = "segment",
+            pos_decoder_type: str = "ProteinSAM",
             **kwargs,
             ):
         data_name = "VenusX_Motif"
@@ -395,6 +398,7 @@ class MotifGroundingSingle(FragGroundingSingle):
             task_type=task_type, 
             max_sequence_length=max_sequence_length,
             use_detailed_template=use_detailed_template,
+            pos_decoder_type=pos_decoder_type,
             question_template=question_template,
             answer_template=answer_template,
             **kwargs,
@@ -407,7 +411,7 @@ class EvoGroundingSingle(FragGroundingSingle):
             split: str, 
             max_sequence_length: Optional[int] = 1021,
             use_detailed_template: bool = False,
-            model_type: str = "segment",
+            pos_decoder_type: str = "ProteinSAM",
             **kwargs,
             ):
         data_name = "VenusX_Evo"
@@ -421,6 +425,7 @@ class EvoGroundingSingle(FragGroundingSingle):
             task_type=task_type, 
             max_sequence_length=max_sequence_length,
             use_detailed_template=use_detailed_template,
+            pos_decoder_type=pos_decoder_type,
             question_template=question_template,
             answer_template=answer_template,
             **kwargs,
@@ -436,7 +441,7 @@ class FragGroundingGroup(FragRefDataset):
             task_type: str,
             max_sequence_length: Optional[int] = 1021,
             use_detailed_template: bool = False,
-            model_type: str = "segment",
+            pos_decoder_type: str = "ProteinSAM",
             **kwargs,
             ):
         super().__init__(
@@ -447,7 +452,7 @@ class FragGroundingGroup(FragRefDataset):
             max_sequence_length=max_sequence_length, 
             **kwargs,
             )
-        self.model_type = model_type
+        self.pos_decoder_type = pos_decoder_type
         self.use_detailed_template = use_detailed_template
         self.data_infos = self._filter_grounding(self.data_infos)
 
@@ -665,12 +670,12 @@ class FragGroundingGroup(FragRefDataset):
             # position_grd.append([[frag_item["start_position"]-start, frag_item["end_position"]-start+1] for frag_item in frag["frags"]])
             position_temp = [[frag_item["start_position"]-start, frag_item["end_position"]-start+1] for frag_item in frag["frags"]]
             position_grd.append(self.sort_position(position_temp))
-        if self.model_type == "segment":
+        if self.pos_decoder_type == "ProteinSAM":
             conversation, answer = self.create_conversations_seg(sequence, answer_list, position_grd)
-        elif self.model_type == "class":
+        elif self.pos_decoder_type == "Simple":
              conversation, answer = self.create_conversations_class(sequence, answer_list, position_grd)
         else:
-            raise NotImplementedError(f"Model type {self.model_type} not implemented.")
+            raise NotImplementedError(f"Model type {self.pos_decoder_type} not implemented.")
         position_ref = None
         return {
                 "sequence": sequence,
@@ -694,7 +699,7 @@ class DomainGroundingGroup(FragGroundingGroup):
             split: str, 
             max_sequence_length: Optional[int] = 1021,
             use_detailed_template: bool = False,
-            model_type: str = "segment",
+            pos_decoder_type: str = "ProteinSAM",
             **kwargs,
             ):
         data_name = "VenusX_Dom"
@@ -706,6 +711,7 @@ class DomainGroundingGroup(FragGroundingGroup):
             task_type=task_type, 
             max_sequence_length=max_sequence_length,
             use_detailed_template=use_detailed_template,
+            pos_decoder_type=pos_decoder_type,
             **kwargs,
             )
 
@@ -716,7 +722,7 @@ class ActGroundingGroup(FragGroundingGroup):
             split: str, 
             max_sequence_length: Optional[int] = 1021,
             use_detailed_template: bool = False,
-            model_type: str = "segment",
+            pos_decoder_type: str = "ProteinSAM",
             **kwargs,
             ):
         data_name = "VenusX_Act"
@@ -728,6 +734,7 @@ class ActGroundingGroup(FragGroundingGroup):
             task_type=task_type, 
             max_sequence_length=max_sequence_length,
             use_detailed_template=use_detailed_template,
+            pos_decoder_type=pos_decoder_type,
             **kwargs,
             )
 
@@ -738,7 +745,7 @@ class BindIGroundingGroup(FragGroundingGroup):
             split: str, 
             max_sequence_length: Optional[int] = 1021,
             use_detailed_template: bool = False,
-            model_type: str = "segment",
+            pos_decoder_type: str = "ProteinSAM",
             **kwargs,
             ):
         data_name = "VenusX_BindI"
@@ -750,6 +757,7 @@ class BindIGroundingGroup(FragGroundingGroup):
             task_type=task_type, 
             max_sequence_length=max_sequence_length,
             use_detailed_template=use_detailed_template,
+            pos_decoder_type=pos_decoder_type,
             **kwargs,
             )
 class MotifGroundingGroup(FragGroundingGroup):
@@ -759,7 +767,7 @@ class MotifGroundingGroup(FragGroundingGroup):
             split: str, 
             max_sequence_length: Optional[int] = 1021,
             use_detailed_template: bool = False,
-            model_type: str = "segment",
+            pos_decoder_type: str = "ProteinSAM",
             **kwargs,
             ):
         data_name = "VenusX_Motif"
@@ -771,6 +779,7 @@ class MotifGroundingGroup(FragGroundingGroup):
             task_type=task_type, 
             max_sequence_length=max_sequence_length,
             use_detailed_template=use_detailed_template,
+            pos_decoder_type=pos_decoder_type,
             **kwargs,
             )
 class EvoGroundingGroup(FragGroundingGroup):
@@ -780,7 +789,7 @@ class EvoGroundingGroup(FragGroundingGroup):
             split: str, 
             max_sequence_length: Optional[int] = 1021,
             use_detailed_template: bool = False,
-            model_type: str = "segment",
+            pos_decoder_type: str = "ProteinSAM",
             **kwargs,
             ):
         data_name = "VenusX_Evo"
@@ -792,6 +801,7 @@ class EvoGroundingGroup(FragGroundingGroup):
             task_type=task_type, 
             max_sequence_length=max_sequence_length,
             use_detailed_template=use_detailed_template,
+            pos_decoder_type=pos_decoder_type,
             **kwargs,
             )
             
