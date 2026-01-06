@@ -27,6 +27,8 @@ model_grounding_segformer/*.log
 model_grounding_segformer/category_embeddings.pt
 model_grounding_segformer/dataset_predictions.json
 model_grounding_segformer/logs/
+model_grounding_segformer/tensorboard/
+model_grounding_segformer/category_embeddings_old_origin_llama.pt
 
 
 CLAUDE.md

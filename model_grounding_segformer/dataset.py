@@ -453,7 +453,7 @@ def get_datasets_and_collator(
 ) -> Tuple[Dict[str, ProteinSAMDataset], ProteinSAMCollator]:
     """
     Create datasets and collator for ProteinSAM training.
-    
+
     Args:
         root_dir: Root directory containing data
         data_name: Dataset name (e.g., "VenusX_Dom")
@@ -463,19 +463,19 @@ def get_datasets_and_collator(
         max_text_length: Maximum text length
         use_category_cache: Whether to use category embeddings cache
         **dataset_kwargs: Additional arguments for dataset
-        
+
     Returns:
         Dictionary of datasets and data collator
     """
     # Initialize tokenizers
     esm_tokenizer = EsmTokenizer.from_pretrained(esm_model_path)
-    
+
     llama_tokenizer = None
     if not use_category_cache and llama_model_path is not None:
         llama_tokenizer = LlamaTokenizer.from_pretrained(llama_model_path)
         if llama_tokenizer.pad_token is None:
             llama_tokenizer.pad_token = '<|reserved_special_token_0|>'
-    
+
     # Create datasets
     datasets = {}
     for split in ["train", "valid", "test"]:
@@ -486,7 +486,7 @@ def get_datasets_and_collator(
             max_sequence_length=max_sequence_length,
             **dataset_kwargs
         )
-    
+
     # Create collator
     collator = ProteinSAMCollator(
         esm_tokenizer=esm_tokenizer,
@@ -495,5 +495,304 @@ def get_datasets_and_collator(
         max_text_length=max_text_length,
         use_category_cache=use_category_cache
     )
-    
+
+    return datasets, collator
+
+
+class ProteinSAMDatasetWithESMCache(ProteinSAMDataset):
+    """
+    Dataset for ProteinSAM training with pre-computed ESM embeddings.
+    Extends ProteinSAMDataset to support loading ESM embeddings from cache.
+
+    Note: Pre-computed ESM embeddings should NOT include BOS/EOS tokens.
+    The embeddings are stored as (seq_len, hidden_size) tensors where seq_len
+    equals the actual protein sequence length.
+    """
+
+    def __init__(
+        self,
+        root_dir: str,
+        data_name: str,
+        split: str,
+        esm_embeddings_cache: Dict[str, torch.Tensor],
+        max_sequence_length: int = 1021,
+        null_position_prob: float = 0.3,
+        random_position_prob: float = 0.2,
+        position_noise_std: float = 10.0,
+        filter_long_sequences: bool = True,
+        **kwargs
+    ):
+        self.esm_embeddings_cache = esm_embeddings_cache
+        super().__init__(
+            root_dir=root_dir,
+            data_name=data_name,
+            split=split,
+            max_sequence_length=max_sequence_length,
+            null_position_prob=null_position_prob,
+            random_position_prob=random_position_prob,
+            position_noise_std=position_noise_std,
+            filter_long_sequences=filter_long_sequences,
+            **kwargs
+        )
+
+        # Verify all UIDs have embeddings
+        missing_uids = set()
+        for item in self.data_infos:
+            if item["uid"] not in self.esm_embeddings_cache:
+                missing_uids.add(item["uid"])
+
+        if missing_uids:
+            print(f"Warning: {len(missing_uids)} UIDs missing from ESM cache in {split} split")
+            # Filter out samples without embeddings
+            self.data_infos = [item for item in self.data_infos if item["uid"] in self.esm_embeddings_cache]
+            print(f"Filtered to {len(self.data_infos)} samples with ESM embeddings")
+
+    def __getitem__(self, idx: int) -> Dict[str, Any]:
+        """
+        Get a single data sample with pre-computed ESM embedding.
+
+        Returns:
+            Dictionary containing processed data sample with ESM embedding
+        """
+        # Get base sample from parent class
+        sample = super().__getitem__(idx)
+
+        # Get original data item for uid
+        data_item = self.data_infos[idx]
+        uid = data_item["uid"]
+
+        # Get pre-computed ESM embedding for this uid
+        # The embedding is (full_seq_len, hidden_size) without BOS/EOS
+        full_embedding = self.esm_embeddings_cache[uid]  # (full_seq_len, hidden_size)
+
+        # Handle sequence truncation - need to slice embedding accordingly
+        original_sequence = data_item["sequence"]
+        processed_sequence = sample["sequence"]
+
+        if len(processed_sequence) < len(original_sequence):
+            # Sequence was truncated, find where processed_sequence starts in original
+            # This is more reliable than calculating offset from fragment positions
+            truncate_offset = original_sequence.find(processed_sequence)
+            if truncate_offset == -1:
+                # Fallback: should not happen, but use start position based calculation
+                truncate_offset = data_item["start_position"] - sample.get("start_position", 0)
+                truncate_offset = max(0, truncate_offset)
+
+            # Slice the embedding
+            embedding = full_embedding[truncate_offset:truncate_offset + len(processed_sequence)]
+        else:
+            embedding = full_embedding[:len(processed_sequence)]
+
+        # Add embedding to sample
+        sample["esm_embedding"] = embedding  # (seq_len, hidden_size)
+        sample["uid"] = uid
+
+        return sample
+
+
+class ProteinSAMCollatorWithESMCache:
+    """
+    Data collator for ProteinSAM dataset with pre-computed ESM embeddings.
+    Handles batch preparation with ESM embeddings instead of tokenization.
+
+    Note: ESM embeddings in the cache do NOT include BOS/EOS tokens.
+    The collator pads embeddings and creates appropriate attention masks.
+    """
+
+    def __init__(
+        self,
+        esm_tokenizer: EsmTokenizer,  # Still needed for attention mask computation
+        llama_tokenizer: Optional[LlamaTokenizer] = None,
+        max_protein_length: int = 1024,
+        max_text_length: int = 128,
+        use_category_cache: bool = True,
+        esm_hidden_size: int = 2560  # ESM 3B hidden size
+    ):
+        self.esm_tokenizer = esm_tokenizer
+        self.llama_tokenizer = llama_tokenizer
+        self.max_protein_length = max_protein_length
+        self.max_text_length = max_text_length
+        self.use_category_cache = use_category_cache
+        self.esm_hidden_size = esm_hidden_size
+
+        # Set pad token for Llama if not exists and if tokenizer is provided
+        if self.llama_tokenizer is not None and self.llama_tokenizer.pad_token is None:
+            self.llama_tokenizer.pad_token = '<|reserved_special_token_0|>'
+
+    def __call__(self, batch: List[Dict[str, Any]]) -> Dict[str, torch.Tensor]:
+        """
+        Collate a batch of samples with pre-computed ESM embeddings.
+
+        Args:
+            batch: List of data samples with esm_embedding field
+
+        Returns:
+            Batched tensors ready for model input
+        """
+        # Extract data
+        sequences = [item["sequence"] for item in batch]
+        categories = [item["category"] for item in batch]
+        point_positions = [item["point_position"] for item in batch]
+        is_multi_region = [item.get("is_multi_region", False) for item in batch]
+        esm_embeddings = [item["esm_embedding"] for item in batch]
+
+        batch_size = len(batch)
+
+        # Find max sequence length in this batch (without BOS/EOS)
+        seq_lengths = [emb.shape[0] for emb in esm_embeddings]
+        max_seq_len = max(seq_lengths)
+
+        # Pad ESM embeddings to max length
+        # Shape: (batch_size, max_seq_len, hidden_size)
+        padded_embeddings = torch.zeros(batch_size, max_seq_len, self.esm_hidden_size)
+
+        # Create attention mask WITH BOS/EOS positions to match forward() expectation
+        # Forward function will slice it with [:, 1:-1] to get actual sequence mask
+        # So we create mask of shape (batch_size, max_seq_len + 2) with 1s at BOS/EOS positions
+        attention_mask = torch.zeros(batch_size, max_seq_len + 2, dtype=torch.long)
+
+        for i, emb in enumerate(esm_embeddings):
+            seq_len = emb.shape[0]
+            padded_embeddings[i, :seq_len, :] = emb
+            # Set BOS position (index 0) = 1
+            attention_mask[i, 0] = 1
+            # Set actual sequence positions (index 1 to seq_len) = 1
+            attention_mask[i, 1:seq_len + 1] = 1
+            # Set EOS position (index seq_len + 1) = 1
+            attention_mask[i, seq_len + 1] = 1
+
+        # Handle text tokenization (only if not using cache)
+        text_input_ids = None
+        text_attention_mask = None
+
+        if not self.use_category_cache and self.llama_tokenizer is not None:
+            text_tokenized = self.llama_tokenizer(
+                categories,
+                padding=True,
+                truncation=True,
+                max_length=self.max_text_length,
+                return_tensors="pt"
+            )
+            text_input_ids = text_tokenized["input_ids"]
+            text_attention_mask = text_tokenized["attention_mask"]
+
+        # Create unified residue-level labels (0: background, 1: functional region)
+        residue_labels = torch.zeros(batch_size, max_seq_len, dtype=torch.long)
+
+        for i, item in enumerate(batch):
+            if item.get("is_multi_region", False):
+                # Multi-region task: mark all fragments of the same category
+                same_category_fragments = item.get("same_category_fragments", [])
+                for frag in same_category_fragments:
+                    start_pos = frag["start_position"]
+                    end_pos = frag["end_position"]
+                    # Ensure positions are within bounds
+                    start_pos = max(0, min(start_pos, max_seq_len - 1))
+                    end_pos = max(0, min(end_pos, max_seq_len - 1))
+                    residue_labels[i, start_pos:end_pos+1] = 1
+            else:
+                # Single region task: mark single functional region
+                start_pos = item["start_position"]
+                end_pos = item["end_position"]
+                # Ensure positions are within bounds
+                start_pos = max(0, min(start_pos, max_seq_len - 1))
+                end_pos = max(0, min(end_pos, max_seq_len - 1))
+                residue_labels[i, start_pos:end_pos+1] = 1
+
+        # Handle point positions (some might be None)
+        point_tensor = torch.zeros(batch_size, dtype=torch.long)
+        point_mask = torch.zeros(batch_size, dtype=torch.bool)
+
+        for i, point_pos in enumerate(point_positions):
+            if point_pos is not None:
+                point_tensor[i] = max(0, point_pos)
+                point_mask[i] = True
+
+        batch_dict = {
+            "external_esm_embeddings": padded_embeddings,  # (batch_size, seq_len, hidden_size) - actual protein embeddings without BOS/EOS
+            "protein_attention_mask": attention_mask,  # (batch_size, seq_len+2) - WITH BOS/EOS positions for forward() compatibility
+            "point_positions": point_tensor,
+            "point_mask": point_mask,
+            "residue_labels": residue_labels,  # (batch_size, seq_len) - actual sequence length without BOS/EOS
+            "is_multi_region": is_multi_region,
+            "categories": categories,
+            "sequences": sequences
+        }
+
+        # Add text tokens only if available
+        if text_input_ids is not None and text_attention_mask is not None:
+            batch_dict.update({
+                "text_input_ids": text_input_ids,
+                "text_attention_mask": text_attention_mask
+            })
+
+        return batch_dict
+
+
+def get_datasets_and_collator_with_esm_cache(
+    root_dir: str,
+    data_name: str,
+    esm_model_path: str,
+    esm_embeddings_path: str,
+    llama_model_path: Optional[str] = None,
+    max_sequence_length: int = 1021,
+    max_text_length: int = 128,
+    use_category_cache: bool = True,
+    **dataset_kwargs
+) -> Tuple[Dict[str, ProteinSAMDatasetWithESMCache], ProteinSAMCollatorWithESMCache]:
+    """
+    Create datasets and collator for ProteinSAM training with pre-computed ESM embeddings.
+
+    Args:
+        root_dir: Root directory containing data
+        data_name: Dataset name (e.g., "VenusX_Dom")
+        esm_model_path: Path to ESM tokenizer
+        esm_embeddings_path: Path to pre-computed ESM embeddings
+        llama_model_path: Path to Llama tokenizer (optional if using cache)
+        max_sequence_length: Maximum protein sequence length
+        max_text_length: Maximum text length
+        use_category_cache: Whether to use category embeddings cache
+        **dataset_kwargs: Additional arguments for dataset
+
+    Returns:
+        Dictionary of datasets and data collator
+    """
+    # Load ESM embeddings cache
+    print(f"Loading ESM embeddings from {esm_embeddings_path}...")
+    esm_cache = torch.load(esm_embeddings_path, map_location="cpu")
+    esm_embeddings_cache = esm_cache["sequence_embeddings"]
+    esm_hidden_size = esm_cache["embedding_dim"]
+    print(f"Loaded {len(esm_embeddings_cache)} ESM embeddings with dimension {esm_hidden_size}")
+
+    # Initialize tokenizers
+    esm_tokenizer = EsmTokenizer.from_pretrained(esm_model_path)
+
+    llama_tokenizer = None
+    if not use_category_cache and llama_model_path is not None:
+        llama_tokenizer = LlamaTokenizer.from_pretrained(llama_model_path)
+        if llama_tokenizer.pad_token is None:
+            llama_tokenizer.pad_token = '<|reserved_special_token_0|>'
+
+    # Create datasets
+    datasets = {}
+    for split in ["train", "valid", "test"]:
+        datasets[split] = ProteinSAMDatasetWithESMCache(
+            root_dir=root_dir,
+            data_name=data_name,
+            split=split,
+            esm_embeddings_cache=esm_embeddings_cache,
+            max_sequence_length=max_sequence_length,
+            **dataset_kwargs
+        )
+
+    # Create collator
+    collator = ProteinSAMCollatorWithESMCache(
+        esm_tokenizer=esm_tokenizer,
+        llama_tokenizer=llama_tokenizer,
+        max_protein_length=max_sequence_length,
+        max_text_length=max_text_length,
+        use_category_cache=use_category_cache,
+        esm_hidden_size=esm_hidden_size
+    )
+
     return datasets, collator

@@ -1,6 +1,11 @@
 """
-Training script for ProteinSAM model.
+Training script for ProteinSAM model with pre-computed ESM embeddings.
 Single GPU training for protein functional region grounding.
+
+This script supports:
+1. Pre-computed ESM embeddings to reduce training time computation
+2. TensorBoard logging for loss and metrics tracking
+3. External ESM embeddings without BOS/EOS tokens
 """
 
 import argparse
@@ -21,7 +26,7 @@ import logging
 from torch.utils.tensorboard import SummaryWriter
 
 from protein_sam import ProteinSAM
-from dataset import get_datasets_and_collator
+from dataset import get_datasets_and_collator, get_datasets_and_collator_with_esm_cache
 
 
 def set_seed(seed: int = 42):
@@ -103,8 +108,25 @@ def train_epoch(
     epoch: int,
     writer: Optional[SummaryWriter] = None,
     global_step: int = 0,
-) -> Dict[str, float]:
-    """Train for one epoch."""
+    use_external_esm: bool = False
+) -> Dict[str, Any]:
+    """
+    Train for one epoch.
+
+    Args:
+        model: ProteinSAM model
+        train_loader: Training data loader
+        optimizer: Optimizer
+        device: Device to use
+        logger: Logger
+        epoch: Current epoch number
+        writer: TensorBoard writer for logging
+        global_step: Global step counter for TensorBoard
+        use_external_esm: Whether using external ESM embeddings
+
+    Returns:
+        Dictionary containing metrics and updated global_step
+    """
     model.train()
     total_loss = 0.0
     total_dice_loss = 0.0
@@ -112,59 +134,75 @@ def train_epoch(
     total_acc = 0.0
     total_iou = 0.0
     num_batches = len(train_loader)
-    
+
     progress_bar = tqdm(train_loader, desc=f"Epoch {epoch} Training")
-    
+
     for batch_idx, batch in enumerate(progress_bar):
         # Move batch to device
         for key in batch:
             if isinstance(batch[key], torch.Tensor):
                 batch[key] = batch[key].to(device)
-        
+
         # Handle point positions
         point_mask = batch["point_mask"]
         point_positions = batch["point_positions"] if torch.any(point_mask) else None
-        
+
         # Forward pass
         optimizer.zero_grad()
-        outputs = model(
-            protein_input_ids=batch["protein_input_ids"],
-            protein_attention_mask=batch["protein_attention_mask"],
-            text_input_ids=batch.get("text_input_ids"),
-            text_attention_mask=batch.get("text_attention_mask"),
-            categories=batch["categories"],
-            point_positions=point_positions,
-            residue_labels=batch["residue_labels"]
-        )
-        
+
+        if use_external_esm:
+            # Use external ESM embeddings (without BOS/EOS tokens)
+            outputs = model(
+                protein_input_ids=None,
+                protein_attention_mask=batch["protein_attention_mask"],
+                text_input_ids=batch.get("text_input_ids"),
+                text_attention_mask=batch.get("text_attention_mask"),
+                categories=batch["categories"],
+                point_positions=point_positions,
+                residue_labels=batch["residue_labels"],
+                external_esm_embeddings=batch["external_esm_embeddings"]
+            )
+        else:
+            # Use internal ESM encoder
+            outputs = model(
+                protein_input_ids=batch["protein_input_ids"],
+                protein_attention_mask=batch["protein_attention_mask"],
+                text_input_ids=batch.get("text_input_ids"),
+                text_attention_mask=batch.get("text_attention_mask"),
+                categories=batch["categories"],
+                point_positions=point_positions,
+                residue_labels=batch["residue_labels"]
+            )
+
+        # Attention mask includes BOS/EOS positions, slice to get actual sequence mask
+        adjusted_mask = batch["protein_attention_mask"][:, 1:-1]
+
         loss = outputs["loss"]
         dice_loss = outputs["dice_loss"]
         ce_loss = outputs["ce_loss"]
-                
+
         # Backward pass
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
-        
-        adjusted_mask = batch["protein_attention_mask"][:, 1:-1]
 
         # Calculate metrics using unified residue labels
         mask_acc = calculate_mask_accuracy(
-            outputs["mask_predictions"], 
-            batch["residue_labels"], 
+            outputs["mask_predictions"],
+            batch["residue_labels"],
             adjusted_mask
         )
         mask_iou = calculate_mask_iou(
-            outputs["mask_predictions"], 
-            batch["residue_labels"], 
+            outputs["mask_predictions"],
+            batch["residue_labels"],
             adjusted_mask
         )
-        
+
         # Update running averages
         total_loss += loss.item()
         total_dice_loss += dice_loss.item()
         total_ce_loss += ce_loss.item()
-        total_acc += mask_acc  # Reuse variable names for compatibility
+        total_acc += mask_acc
         total_iou += mask_iou
 
         # Log to TensorBoard (per step)
@@ -176,14 +214,14 @@ def train_epoch(
             writer.add_scalar("Train/MaskIoU_Step", mask_iou, global_step)
 
         global_step += 1
-        
+
         # Update progress bar
         avg_loss = total_loss / (batch_idx + 1)
         avg_loss_dice = total_dice_loss / (batch_idx + 1)
         avg_loss_ce = total_ce_loss / (batch_idx + 1)
         avg_mask_acc = total_acc / (batch_idx + 1)
         avg_mask_iou = total_iou / (batch_idx + 1)
-        
+
         progress_bar.set_postfix({
             "loss": f"{avg_loss:.4f}",
             "loss_dice": f"{avg_loss_dice:.4f}",
@@ -191,7 +229,7 @@ def train_epoch(
             "mask_acc": f"{avg_mask_acc:.4f}",
             "mask_iou": f"{avg_mask_iou:.4f}"
         })
-    
+
     return {
         "loss": total_loss / num_batches,
         "dice_loss": total_dice_loss / num_batches,
@@ -206,9 +244,22 @@ def evaluate(
     model: ProteinSAM,
     eval_loader: DataLoader,
     device: str,
-    logger: logging.Logger
+    logger: logging.Logger,
+    use_external_esm: bool = False
 ) -> Dict[str, float]:
-    """Evaluate the model."""
+    """
+    Evaluate the model.
+
+    Args:
+        model: ProteinSAM model
+        eval_loader: Evaluation data loader
+        device: Device to use
+        logger: Logger
+        use_external_esm: Whether using external ESM embeddings
+
+    Returns:
+        Dictionary containing evaluation metrics
+    """
     model.eval()
     total_loss = 0.0
     total_dice_loss = 0.0
@@ -216,49 +267,64 @@ def evaluate(
     total_acc = 0.0
     total_iou = 0.0
     num_batches = len(eval_loader)
-    
+
     progress_bar = tqdm(eval_loader, desc="Evaluating")
-    
+
     with torch.no_grad():
         for batch_idx, batch in enumerate(progress_bar):
             # Move batch to device
             for key in batch:
                 if isinstance(batch[key], torch.Tensor):
                     batch[key] = batch[key].to(device)
-            
-            # Handle point positions  
+
+            # Handle point positions
             point_mask = batch["point_mask"]
             point_positions = batch["point_positions"] if torch.any(point_mask) else None
-            
+
             # Forward pass
-            outputs = model(
-                protein_input_ids=batch["protein_input_ids"],
-                protein_attention_mask=batch["protein_attention_mask"],
-                text_input_ids=batch.get("text_input_ids"),
-                text_attention_mask=batch.get("text_attention_mask"),
-                categories=batch["categories"],
-                point_positions=point_positions,
-                residue_labels=batch["residue_labels"]
-            )
-            
+            if use_external_esm:
+                # Use external ESM embeddings (without BOS/EOS tokens)
+                outputs = model(
+                    protein_input_ids=None,
+                    protein_attention_mask=batch["protein_attention_mask"],
+                    text_input_ids=batch.get("text_input_ids"),
+                    text_attention_mask=batch.get("text_attention_mask"),
+                    categories=batch["categories"],
+                    point_positions=point_positions,
+                    residue_labels=batch["residue_labels"],
+                    external_esm_embeddings=batch["external_esm_embeddings"]
+                )
+            else:
+                # Use internal ESM encoder
+                outputs = model(
+                    protein_input_ids=batch["protein_input_ids"],
+                    protein_attention_mask=batch["protein_attention_mask"],
+                    text_input_ids=batch.get("text_input_ids"),
+                    text_attention_mask=batch.get("text_attention_mask"),
+                    categories=batch["categories"],
+                    point_positions=point_positions,
+                    residue_labels=batch["residue_labels"]
+                )
+
+            # Attention mask includes BOS/EOS positions, slice to get actual sequence mask
+            adjusted_mask = batch["protein_attention_mask"][:, 1:-1]
+
             loss = outputs["loss"]
             dice_loss = outputs["dice_loss"]
             ce_loss = outputs["ce_loss"]
-            
-            adjusted_mask = batch["protein_attention_mask"][:, 1:-1]
-            
+
             # Calculate metrics using unified residue labels
             mask_acc = calculate_mask_accuracy(
-                outputs["mask_predictions"], 
-                batch["residue_labels"], 
+                outputs["mask_predictions"],
+                batch["residue_labels"],
                 adjusted_mask
             )
             mask_iou = calculate_mask_iou(
-                outputs["mask_predictions"], 
-                batch["residue_labels"], 
+                outputs["mask_predictions"],
+                batch["residue_labels"],
                 adjusted_mask
             )
-            
+
             # Update running averages
             total_loss += loss.item()
             total_dice_loss += dice_loss.item()
@@ -272,7 +338,7 @@ def evaluate(
             avg_loss_ce = total_ce_loss / (batch_idx + 1)
             avg_mask_acc = total_acc / (batch_idx + 1)
             avg_mask_iou = total_iou / (batch_idx + 1)
-            
+
             progress_bar.set_postfix({
                 "loss": f"{avg_loss:.4f}",
                 "loss_dice": f"{avg_loss_dice:.4f}",
@@ -280,7 +346,7 @@ def evaluate(
                 "mask_acc": f"{avg_mask_acc:.4f}",
                 "mask_iou": f"{avg_mask_iou:.4f}"
             })
-    
+
     return {
         "loss": total_loss / num_batches,
         "dice_loss": total_dice_loss / num_batches,
@@ -291,16 +357,10 @@ def evaluate(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Train ProteinSAM model")
-    
+    parser = argparse.ArgumentParser(description="Train ProteinSAM model with pre-computed ESM embeddings")
+
     # Model arguments
-    # parser.add_argument("--esm_model_path", type=str, 
-    #                    default="/home/lfj/projects_dir/pretrained_model/esm2_t30_150M_UR50D",
-    #                    help="Path to ESM model")
-    # parser.add_argument("--esm_model_path", type=str, 
-    #                    default="/home/lfj/projects_dir/pretrained_model/models--facebook--esm2_t33_650M_UR50D",
-    #                    help="Path to ESM model")
-    parser.add_argument("--esm_model_path", type=str, 
+    parser.add_argument("--esm_model_path", type=str,
                        default="/home/lfj/projects_dir/pretrained_model/esm2_t36_3B_UR50D",
                        help="Path to ESM model")
     parser.add_argument("--llama_model_path", type=str,
@@ -308,7 +368,7 @@ def main():
                        help="Path to Llama model")
     parser.add_argument("--output_llama_layer", type=int, default=16,
                        help="Which Llama layer to use for text encoding")
-    
+
     # Data arguments
     parser.add_argument("--data_root", type=str, default="../data",
                        help="Root directory for datasets")
@@ -318,18 +378,24 @@ def main():
                        help="Maximum protein sequence length")
     parser.add_argument("--max_text_length", type=int, default=128,
                        help="Maximum text length")
-    parser.add_argument("--category_embeddings_path", type=str, 
+    parser.add_argument("--category_embeddings_path", type=str,
                        default="./category_embeddings.pt",
                        help="Path to pre-computed category embeddings")
-    parser.add_argument("--use_category_cache", action="store_true", default=True,
+    parser.add_argument("--use_category_cache", default=True,
                        help="Use pre-computed category embeddings cache")
-    
+
+    # ESM embeddings cache arguments
+    parser.add_argument("--use_esm_cache", default=True,
+                       help="Use pre-computed ESM embeddings cache (saves GPU memory and computation)")
+    parser.add_argument("--esm_embeddings_path", type=str, default="/data/lfj/esm_embeddings_3B.pt",
+                       help="Path to pre-computed ESM embeddings (only used when --use_esm_cache is set)")
+
     # Training arguments
-    parser.add_argument("--batch_size", type=int, default=8,
+    parser.add_argument("--batch_size", type=int, default=32,
                        help="Training batch size")
     parser.add_argument("--eval_batch_size", type=int, default=16,
                        help="Evaluation batch size")
-    parser.add_argument("--learning_rate", type=float, default=1e-5,
+    parser.add_argument("--learning_rate", type=float, default=5e-5,
                        help="Learning rate")
     parser.add_argument("--num_epochs", type=int, default=20,
                        help="Number of training epochs")
@@ -339,7 +405,7 @@ def main():
                        help="Weight decay")
     parser.add_argument("--scheduler_type", type=str, default="cosine",
                        choices=["cosine", "step"], help="Scheduler type")
-    
+
     # Model architecture arguments
     parser.add_argument("--decoder_num_heads", type=int, default=8,
                        help="Number of attention heads in decoder")
@@ -347,15 +413,11 @@ def main():
                        help="Number of self-attention heads in decoder (if None, uses same as decoder_num_heads)")
     parser.add_argument("--decoder_num_layers", type=int, default=2,
                        help="Number of decoder layers")
-    # parser.add_argument("--decoder_intermediate_size", type=int, default=512,
-    #                    help="Decoder intermediate size")  # 150M
-    # parser.add_argument("--decoder_intermediate_size", type=int, default=1280,
-    #                    help="Decoder intermediate size")  # 650M
-    parser.add_argument("--decoder_intermediate_size", type=int, default=2560,
-                       help="Decoder intermediate size")  # 3B
+    parser.add_argument("--decoder_intermediate_size", type=int, default=1280,
+                       help="Decoder intermediate size")  # 3B default
     parser.add_argument("--dropout_rate", type=float, default=0.1,
                        help="Dropout rate")
-    
+
     # Dataset-specific arguments
     parser.add_argument("--null_position_prob", type=float, default=0.3,
                        help="Probability to set position prompt to null")
@@ -363,7 +425,7 @@ def main():
                        help="Probability to set random position")
     parser.add_argument("--position_noise_std", type=float, default=20,
                        help="Standard deviation for position noise")
-    
+
     # Other arguments
     parser.add_argument("--output_dir", type=str, default="./checkpoints_grounding_3B",
                        help="Output directory for model checkpoints")
@@ -379,41 +441,49 @@ def main():
                        help="Random seed")
     parser.add_argument("--num_workers", type=int, default=4,
                        help="Number of data loader workers")
-    
+
     args = parser.parse_args()
-    
+
     # Set seed
     set_seed(args.seed)
-    
+
     # Setup logging
     logger = setup_logging(args.log_dir)
     logger.info("Starting ProteinSAM training")
     logger.info(f"Arguments: {vars(args)}")
 
-    # Setup TensorBoard writer
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    tensorboard_log_dir = os.path.join('./tensorboard_logs', f"train_{timestamp}")
-    writer = SummaryWriter(log_dir=tensorboard_log_dir)
-    logger.info(f"TensorBoard logs will be saved to: {tensorboard_log_dir}")
-    
     # Create output directory
     os.makedirs(args.output_dir, exist_ok=True)
-    
+
+    # Setup TensorBoard writer
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    tensorboard_log_dir = os.path.join('tensorboard/logs', f"train_{timestamp}")
+    writer = SummaryWriter(log_dir=tensorboard_log_dir)
+    logger.info(f"TensorBoard logs will be saved to: {tensorboard_log_dir}")
+
     # Load datasets and collator
     logger.info("Loading datasets...")
-    datasets, collator = get_datasets_and_collator(
-        root_dir=args.data_root,
-        data_name=args.data_name,
-        esm_model_path=args.esm_model_path,
-        llama_model_path=args.llama_model_path if not args.use_category_cache else None,
-        max_sequence_length=args.max_sequence_length,
-        max_text_length=args.max_text_length,
-        use_category_cache=args.use_category_cache,
-        null_position_prob=args.null_position_prob,
-        random_position_prob=args.random_position_prob,
-        position_noise_std=args.position_noise_std
-    )
-    
+
+    if args.use_esm_cache:
+        # Use pre-computed ESM embeddings
+        logger.info(f"Using pre-computed ESM embeddings from {args.esm_embeddings_path}")
+        logger.info("Note: ESM embeddings do NOT include BOS/EOS tokens")
+        datasets, collator = get_datasets_and_collator_with_esm_cache(
+            root_dir=args.data_root,
+            data_name=args.data_name,
+            esm_model_path=args.esm_model_path,
+            esm_embeddings_path=args.esm_embeddings_path,
+            llama_model_path=args.llama_model_path if not args.use_category_cache else None,
+            max_sequence_length=args.max_sequence_length,
+            max_text_length=args.max_text_length,
+            use_category_cache=args.use_category_cache,
+            null_position_prob=args.null_position_prob,
+            random_position_prob=args.random_position_prob,
+            position_noise_std=args.position_noise_std
+        )
+    else:
+        raise NotImplementedError("Training without ESM cache is not supported in this script.")
+
     # Create data loaders
     train_loader = DataLoader(
         datasets["train"],
@@ -423,7 +493,7 @@ def main():
         num_workers=args.num_workers,
         pin_memory=True
     )
-    
+
     eval_loader = None
     if "valid" in datasets:
         eval_loader = DataLoader(
@@ -434,10 +504,10 @@ def main():
             num_workers=args.num_workers,
             pin_memory=True
         )
-    
+
     # Initialize model
     logger.info("Initializing model...")
-    
+
     # Save ProteinSAM initialization parameters to JSON file
     protein_sam_init_params = {
         "esm_model_path": args.esm_model_path,
@@ -453,13 +523,13 @@ def main():
         "use_category_cache": args.use_category_cache,
         "category_embeddings_path": args.category_embeddings_path if args.use_category_cache else None
     }
-    
+
     # Save parameters to output directory
     params_file = os.path.join(args.output_dir, "protein_sam_init_params.json")
     with open(params_file, 'w') as f:
         json.dump(protein_sam_init_params, f, indent=2)
     logger.info(f"Saved ProteinSAM initialization parameters to {params_file}")
-    
+
     model = ProteinSAM(
         esm_model_path=args.esm_model_path,
         llama_model_path=args.llama_model_path,
@@ -472,45 +542,57 @@ def main():
         dropout_rate=args.dropout_rate,
         device=args.device,
         use_category_cache=args.use_category_cache,
-        category_embeddings_path=args.category_embeddings_path if args.use_category_cache else None
+        category_embeddings_path=args.category_embeddings_path if args.use_category_cache else None,
+        use_external_esm=args.use_esm_cache  # Skip loading ESM model if using cache
     )
-    
+
     model = model.to(args.device)
-    
+
     # Log model info
     param_info = model.get_trainable_parameters()
     logger.info(f"Model parameters: {param_info}")
-    
+
+    # Log hyperparameters to TensorBoard
+    writer.add_hparams(
+        {
+            "batch_size": args.batch_size,
+            "learning_rate": args.learning_rate,
+            "num_epochs": args.num_epochs,
+            "decoder_num_heads": args.decoder_num_heads,
+            "decoder_num_layers": args.decoder_num_layers,
+            "dropout_rate": args.dropout_rate,
+            "use_esm_cache": args.use_esm_cache,
+        },
+        {}
+    )
+
     # Setup optimizer and scheduler
     optimizer = AdamW(
         model.parameters(),
         lr=args.learning_rate,
         weight_decay=args.weight_decay
     )
-    
+
     if args.scheduler_type == "cosine":
         scheduler = CosineAnnealingLR(optimizer, T_max=args.num_epochs)
     else:
         scheduler = StepLR(optimizer, step_size=args.num_epochs // 3, gamma=0.1)
-    
+
     # Training loop
     best_mask_iou = 0.0
     global_step = 0
-    
+
     for epoch in range(1, args.num_epochs + 1):
         logger.info(f"Starting epoch {epoch}/{args.num_epochs}")
-        
+
         # Train
-        train_metrics = train_epoch(model, train_loader, optimizer, args.device, logger, epoch,
-                                    writer=writer, global_step=global_step)
+        train_metrics = train_epoch(
+            model, train_loader, optimizer, args.device, logger, epoch,
+            writer=writer, global_step=global_step, use_external_esm=args.use_esm_cache
+        )
         global_step = train_metrics["global_step"]
         scheduler.step()
-        
-        # Log training metrics
-        logger.info(f"Epoch {epoch} Training - Loss: {train_metrics['loss']:.4f}, "
-                   f"Mask Acc: {train_metrics['mask_accuracy']:.4f}, "
-                   f"Mask IoU: {train_metrics['mask_iou']:.4f}")
-        
+
         # Log training metrics to TensorBoard (per epoch)
         writer.add_scalar("Train/Loss_Epoch", train_metrics["loss"], epoch)
         writer.add_scalar("Train/DiceLoss_Epoch", train_metrics["dice_loss"], epoch)
@@ -519,10 +601,19 @@ def main():
         writer.add_scalar("Train/MaskIoU_Epoch", train_metrics["mask_iou"], epoch)
         writer.add_scalar("Train/LearningRate", scheduler.get_last_lr()[0], epoch)
 
+        # Log training metrics
+        logger.info(f"Epoch {epoch} Training - Loss: {train_metrics['loss']:.4f}, "
+                   f"Dice: {train_metrics['dice_loss']:.4f}, CE: {train_metrics['ce_loss']:.4f}, "
+                   f"Mask Acc: {train_metrics['mask_accuracy']:.4f}, "
+                   f"Mask IoU: {train_metrics['mask_iou']:.4f}")
+
         # Evaluate
         if eval_loader is not None and epoch % args.eval_every == 0:
-            eval_metrics = evaluate(model, eval_loader, args.device, logger)
-            
+            eval_metrics = evaluate(
+                model, eval_loader, args.device, logger, use_external_esm=args.use_esm_cache
+            )
+
+            # Log eval metrics to TensorBoard
             writer.add_scalar("Eval/Loss", eval_metrics["loss"], epoch)
             writer.add_scalar("Eval/DiceLoss", eval_metrics["dice_loss"], epoch)
             writer.add_scalar("Eval/CELoss", eval_metrics["ce_loss"], epoch)
@@ -530,22 +621,24 @@ def main():
             writer.add_scalar("Eval/MaskIoU", eval_metrics["mask_iou"], epoch)
 
             logger.info(f"Epoch {epoch} Evaluation - Loss: {eval_metrics['loss']:.4f}, "
+                       f"Dice: {eval_metrics['dice_loss']:.4f}, CE: {eval_metrics['ce_loss']:.4f}, "
                        f"Mask Acc: {eval_metrics['mask_accuracy']:.4f}, "
                        f"Mask IoU: {eval_metrics['mask_iou']:.4f}")
-            
+
             # Save best model
             if eval_metrics['mask_iou'] > best_mask_iou:
                 best_mask_iou = eval_metrics['mask_iou']
                 best_model_path = os.path.join(args.output_dir, "best_model.pt")
                 model.save_model(best_model_path)
                 logger.info(f"New best model saved with mask IoU: {best_mask_iou:.4f}")
-        
+                writer.add_scalar("Eval/BestMaskIoU", best_mask_iou, epoch)
+
         # Save checkpoint
         if epoch % args.save_every == 0:
             checkpoint_path = os.path.join(args.output_dir, f"checkpoint_epoch_{epoch}.pt")
             model.save_model(checkpoint_path)
             logger.info(f"Checkpoint saved: {checkpoint_path}")
-    
+
     # Save final model
     final_model_path = os.path.join(args.output_dir, "final_model.pt")
     model.save_model(final_model_path)
@@ -555,6 +648,7 @@ def main():
     writer.close()
     logger.info(f"TensorBoard logs saved to: {tensorboard_log_dir}")
     logger.info("Training completed!")
+
 
 if __name__ == "__main__":
     main()

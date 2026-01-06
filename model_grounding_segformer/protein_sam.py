@@ -513,11 +513,10 @@ class ProteinSAM(nn.Module):
                 'decoder_num_layers': len(self.position_decoder.cross_attention_layers),
                 'decoder_intermediate_size': self.position_decoder.feed_forward_layers[0][0].out_features,
                 'max_sequence_length': self.max_sequence_length,
-                'protein_hidden_size': self.protein_encoder.hidden_size,
                 'output_llama_layer': self.output_llama_layer if self.use_external_embeddings else self.prompt_encoder.output_llama_layer
             }
         }, save_path)
-        
+    
         print(f"Model saved to {save_path}")
     
     def load_model(self, load_path: str):
@@ -533,7 +532,7 @@ class ProteinSAM(nn.Module):
                 name = name.replace('prompt_encoder.', '')
             if name in current_model_keys:
                 new_state_dict[name] = param
-
+    
         self.load_state_dict(new_state_dict, strict=False)
         
         print(f"Model loaded from {load_path}")
