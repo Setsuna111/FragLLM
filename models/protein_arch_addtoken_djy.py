@@ -11,7 +11,7 @@ from pathlib import Path
 from model_grounding_segformer.protein_sam import ProteinSAM
 
 
-def load_protein_sam_params_with_overrides(checkpoint_path: str, esm_model_path: str) -> Dict[str, Any]:
+def load_protein_sam_params_with_overrides(checkpoint_path: str) -> Dict[str, Any]:
     """
     Load ProteinSAM parameters from training and override special parameters for current use.
     """
@@ -25,7 +25,6 @@ def load_protein_sam_params_with_overrides(checkpoint_path: str, esm_model_path:
     params['use_external_esm'] = True  # Use external ESM embeddings
     params['llama_model_path'] = None  # No LLaMA needed
     # params['esm_model_path'] = None  # No ESM model needed, 但还是得传进去获取维度信息
-    params['esm_model_path'] = esm_model_path
     params['category_embeddings_path'] = None  # No category embeddings
     params['device'] = 'cpu'  # Will be moved to correct device later
     
@@ -342,8 +341,33 @@ class FragmentAdapter(nn.Module):
 
         return final_frag_latents
 
-# ProteinSAM replaces FragmentPositionDecoder
-# The original FragmentPositionDecoder has been replaced by ProteinSAM
+
+
+# NOTE: one simple position decoder
+class FragmentPositionDecoder(nn.Module):
+    """Decoder for fragment positions."""
+    def __init__(self, emb_dim: int, pos_num: int, num_heads: int, dropout: float) -> None:
+        """Init."""
+        super().__init__()
+        self.attn = nn.MultiheadAttention(emb_dim, num_heads, dropout=dropout, batch_first=True)
+        self.ffn = FeedForwardNetwork(emb_dim, dropout, ff_expansion=0.5)
+        self.output_layer_norm = nn.LayerNorm(emb_dim)
+        self.output_proj = nn.Linear(emb_dim, pos_num, bias=False)
+
+    def forward(self, latents: Tensor, hidden_states: Tensor) -> Tensor:
+        """Cross-attend hidden_states and latents and self-attend latents."""
+        residuals = hidden_states # [num_positions, seq_L, emb_dim]
+        latents = torch.cat((hidden_states, latents), dim=-2) # [num_positions, seq_L+1, emb_dim]
+        # hidden_states, _ = self.attn(hidden_states, latents, latents)
+        hidden_states_list = []
+        for i, hidden_state in enumerate(hidden_states):
+            hidden_states_list.append(self.attn(hidden_state.unsqueeze(0), latents[i].unsqueeze(0), latents[i].unsqueeze(0))[0])
+        hidden_states = torch.cat(hidden_states_list, dim=0)
+        hidden_states = self.ffn(residuals + hidden_states) + residuals # (num_positions, L, emb_dim)
+        out: Tensor = self.output_layer_norm(hidden_states)
+        out = self.output_proj(out).transpose(1, 2)  # (num_positions, L, 1) -> # (num_positions, 1, L)
+        return out
+    
 
 class ModalityAdapter(nn.Module):
     """2-layer adapter to match the hidden size of different modalities."""
@@ -382,7 +406,7 @@ class ProteinMetaModel:
             self.adapter = ModalityAdapter(config.protein_emb_dim, config.intermediate_dim, config.hidden_size, config.dropout_rate)
             frag_adapter_type = getattr(config, "frag_adapter_type", "qformer")  # Default to qformer for backward compatibility
             self.fragment_adapter = FragmentAdapter(config.protein_emb_dim, config.hidden_size, config.perceiver_latent_size, config.num_perceiver_heads, config.num_perceiver_layers, config.dropout_rate, frag_adapter_type=frag_adapter_type)
-            self.protein_sam = ProteinSAM(**load_protein_sam_params_with_overrides(config.protein_sam_checkpoint_path, config.esm_path))
+            self.protein_sam = FragmentPositionDecoder(config.hidden_size, 1, config.num_perceiver_heads, config.dropout_rate)
     
     def get_esm_encoder(self):
         esm_encoder = getattr(self, "esm_encoder", None)
@@ -398,6 +422,7 @@ class ProteinMetaModel:
         self.config.num_perceiver_heads = model_args.num_perceiver_heads
         self.config.num_perceiver_layers = model_args.num_perceiver_layers
         self.config.frag_adapter_type = getattr(model_args, "frag_adapter_type", "qformer")  # Default to qformer
+        self.config.pos_decoder_type = getattr(model_args, "pos_decoder_type", "SimpleDecoder")  # Default to SimpleDecoder
 
         if self.get_esm_encoder() is None:
             esm_encoder = EsmModel.from_pretrained(model_args.esm_path, add_pooling_layer=False)
@@ -426,8 +451,7 @@ class ProteinMetaModel:
                 frag_adapter_type=self.config.frag_adapter_type
             )
         if getattr(self, "protein_sam", None) is None:
-            self.protein_sam = ProteinSAM(**load_protein_sam_params_with_overrides(model_args.protein_sam_checkpoint_path, model_args.esm_path))
-            self.protein_sam.load_model(model_args.protein_sam_checkpoint_path)
+            self.protein_sam = FragmentPositionDecoder(self.config.hidden_size, 1, self.config.num_perceiver_heads, self.config.dropout_rate)
 
         if model_args.load_adapter_checkpoint_dir is not None:
             adapter_weights = torch.load(model_args.load_adapter_checkpoint_dir, map_location="cpu")

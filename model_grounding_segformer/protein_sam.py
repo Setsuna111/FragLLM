@@ -9,9 +9,9 @@ import torch.nn.functional as F
 from typing import Dict, Optional, Tuple, Any, List
 import os
 
-from protein_encoder import ProteinEncoder
-from prompt_encoder import PromptEncoder
-from position_decoder import PositionDecoder
+from .protein_encoder import ProteinEncoder
+from .prompt_encoder import PromptEncoder
+from .position_decoder import PositionDecoder
 
 
 class ProteinSAM(nn.Module):
