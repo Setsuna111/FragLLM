@@ -18,4 +18,6 @@
 
     # sudo apt install libaio-dev
     DS_BUILD_CPU_ADAM=1 DS_SKIP_CUDA_CHECK=1  pip install deepspeed==0.14.2 --no-cache
+    # 安装flash-attn (可选)
+    pip install flash-attn flash_attn-2.7.0.post2+cu12torch2.3cxx11abiFALSE-cp38-cp38-linux_x86_64.whl  --no-build-isolatio
     ```
