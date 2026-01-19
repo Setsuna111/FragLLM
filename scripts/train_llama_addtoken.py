@@ -11,8 +11,8 @@ import sys
 sys.path.append("..")
 sys.path.append(".")
 
-import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "4"
+# import os
+# os.environ["CUDA_VISIBLE_DEVICES"] = "4"
 
 import pathlib
 import transformers
@@ -473,7 +473,7 @@ def train(attn_implementation=None):
         rank0_print("Loaded Prot2Text llama_decoder weights from ", model_args.load_pro2text_checkpoint_dir)
 
     model.config.use_cache = False
-    if model_args.freeze_backbone:
+    if  model_args.freeze_backbone:
         model.model.requires_grad_(False)
 
     if training_args.gradient_checkpointing:
@@ -596,7 +596,8 @@ def train(attn_implementation=None):
         if training_args.freeze_fragment_adapter:
             for p in model.get_model().fragment_adapter.parameters():
                 p.requires_grad_(False)
-        
+    rank0_print("ModelArchitecture:")
+    rank0_print(model) 
     rank0_print("ModelTrainable:")
     rank0_print([n for n, p in model.named_parameters() if p.requires_grad])
     rank0_print(model.device)

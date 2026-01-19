@@ -336,6 +336,62 @@ class HybridValidDataset(HybridDatasetBase):
             epoch_samples=epoch_samples, 
             **kwargs,
             )
+# For alter training
+class HybridFuncDataset(HybridDatasetBase):
+    def __init__(self, 
+            root_dir: str, 
+            data_func: str, 
+            split: str, 
+            max_sequence_length: Optional[int] = 1021, 
+            epoch_samples: Optional[int] = None,
+            **kwargs,
+            ):
+        data_list = data_func.split("||")
+        super().__init__(
+            root_dir=root_dir, 
+            data_list=data_list, 
+            split=split, 
+            max_sequence_length=max_sequence_length, 
+            epoch_samples=epoch_samples, 
+            **kwargs,
+            )
+
+class HybridReferringDataset(HybridDatasetBase):
+    def __init__(self, 
+            root_dir: str, 
+            data_referring: str, 
+            split: str, 
+            max_sequence_length: Optional[int] = 1021, 
+            epoch_samples: Optional[int] = None,
+            **kwargs,
+            ):
+        data_list = data_referring.split("||")
+        super().__init__(
+            root_dir=root_dir, 
+            data_list=data_list, 
+            split=split, 
+            max_sequence_length=max_sequence_length, 
+            epoch_samples=epoch_samples, 
+            **kwargs,
+            )
+class HybridGroundingDataset(HybridDatasetBase):
+    def __init__(self, 
+            root_dir: str, 
+            data_grounding: str, 
+            split: str, 
+            max_sequence_length: Optional[int] = 1021, 
+            epoch_samples: Optional[int] = None,
+            **kwargs,
+            ):
+        data_list = data_grounding.split("||")
+        super().__init__(
+            root_dir=root_dir, 
+            data_list=data_list, 
+            split=split, 
+            max_sequence_length=max_sequence_length, 
+            epoch_samples=epoch_samples, 
+            **kwargs,
+            )
 
 """Based on HybridDatasetBase"""
 def make_multitask_dataset(data_args):
