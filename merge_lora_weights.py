@@ -174,17 +174,13 @@ def merge_lora(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    model_path = "/home/dataset-local/projects/Documents/FragLLM_git_v1_2512/checkpoints/FragLLM_260118_GroundingAll_1e_lora32"
-
-    model_path = model_path.rstrip('/')
-    merged_path = model_path + "_merge"
-
-    parser.add_argument("--model-path", type=str, default=model_path)
+    parser.add_argument("--model-path", type=str, default= "/home/dataset-local/projects/Documents/FragLLM_git_v1_2512/checkpoints/FragLLM_260120_GroundingAll_4e_lora32")
     parser.add_argument("--model-base", type=str, default="/home/dataset-local/projects/Data/HF_models/Meta-Llama-3.1-8B-Instruct")
     parser.add_argument("--pos-decoder-type", type=str, default="Simple")
-    parser.add_argument("--save-model-path", type=str, default=merged_path)
-
-
+    # parser.add_argument("--save-model-path", type=str, default=merged_path)
     args = parser.parse_args()
+    model_path = args.model_path.rstrip('/')
+    merged_path = model_path + "_merge"
+    args.save_model_path = merged_path
 
     merge_lora(args)
