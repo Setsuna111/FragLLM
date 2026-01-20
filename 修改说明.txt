@@ -1,3 +1,9 @@
+26-0120 djy
+1. train_llama_addtoken.py设置TrainingArgs中dataloader_persistent_workers=True，ddp_timeout=10800，避免训练多个epoch时出现NCCL超时的问题；
+2. 新增了模型权重merge的脚本
+3. README.md中添加了训练脚本和权重merge脚本的说明
+
+
 26-0119 djy
 1. 添加了训练过程中function/referring/grounding三种数据分别优化的训练脚本:train_llama_addtoken_alter, run_training_llama_addtoken_alter
 2. 补充了Flash-Attn的方式（加速效果不明显，带宽不是主要瓶颈）
