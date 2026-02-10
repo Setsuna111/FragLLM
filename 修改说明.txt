@@ -1,3 +1,10 @@
+26-0210 djy
+1. dataset/dataloader_frag.py、dataset/dataloader_referring.py中get_item添加了"interpro_id": interpro_id的元素；
+2. eval/evaluate_reference_lfj.py结果中传入了interpro_id，实现了分类结果的评估；
+3. eval/metric_cls.py对应更新了referring的评估代码
+4. models/protein_llama_addtoken_djy.py补充了inference_path
+
+
 26-0120 djy
 1. train_llama_addtoken.py设置TrainingArgs中dataloader_persistent_workers=True，ddp_timeout=10800，避免训练多个epoch时出现NCCL超时的问题；
 2. 新增了模型权重merge的脚本

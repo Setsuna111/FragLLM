@@ -198,10 +198,10 @@ class FragRefDataset(torch.utils.data.Dataset):
     
     def __getitem__(self, idx: int) -> Dict[str, str]:
         data_item = self.data_infos[idx]
-
         sequence = data_item["sequence"]
         start_pos = data_item["start_pos"]
         end_pos = data_item["end_pos"]
+        interpro_id = data_item["interpro_id"]
 
         # 长度处理 0904修改
         if len(sequence) > self.max_sequence_length and not self.filter_sequence:
@@ -248,7 +248,8 @@ class FragRefDataset(torch.utils.data.Dataset):
                 "position_ref": position_ref,
                 "position_grd": position_grd,
                 "start": start,
-                "dataset_idx": data_item["dataset_idx"]
+                "dataset_idx": data_item["dataset_idx"],
+                "interpro_id": interpro_id
         }
 
 # referring description

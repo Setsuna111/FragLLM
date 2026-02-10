@@ -6,7 +6,6 @@ import json
 import pickle
 import os
 import evaluate
-os.environ['CUDA_VISIBLE_DEVICES'] = '7'  # restrict GPU visibility
 from typing import Optional, Union, List, Dict, Any
 from sentence_transformers import SentenceTransformer
 from torchmetrics.classification import (
@@ -24,8 +23,22 @@ from torchmetrics.classification import (
     AveragePrecision,
     MulticlassF1Score
 )
-
-
+import argparse
+argParser = argparse.ArgumentParser()
+# metrics = ReferenceMetrics(
+#         device='cuda',
+#         embedding_model="/home/lfj/projects_dir/pretrained_model/Qwen3-Embedding-0.6B",
+#         interpro_db_path="/home/lfj/projects_dir/FragLLM/data/new_interpro_metadata_short_with_fragment_type_v3.json",
+#         cache_dir="/home/lfj/projects_dir/FragLLM/eval/cache",
+#         batch_size=16
+#     )
+argParser.add_argument("--embedding_model", type=str, default="/home/lfj/projects_dir/pretrained_model/Qwen3-Embedding-0.6B", help="path to BLAST classification results CSV file")
+argParser.add_argument("--interpro_db_path", type=str, default="/home/lfj/projects_dir/FragLLM/data/new_interpro_metadata_short_with_fragment_type_v3.json", help="path to BLAST classification results CSV file")
+argParser.add_argument("--cache_dir", type=str, default="/home/lfj/projects_dir/FragLLM/eval/cache", help="path to BLAST classification results CSV file")
+argParser.add_argument("--batch_size", type=int, default=16, help="path to BLAST classification results CSV file")
+argParser.add_argument("--bert_model_type", type=str, default="/home/dataset-local/projects/Data/HF_models/biobert-large-cased-v1.1", help="path to BLAST classification results CSV file")
+argParser.add_argument("--results_path", type=str, help="path to BLAST classification results CSV file")
+args = argParser.parse_args()
 class ClsMetrics:
     """
         Multiclass classification metrics, for reference task.
@@ -72,11 +85,11 @@ class LanguageMetrics:
     Placeholder for language metrics (BLEU, etc.) to be implemented.
     """
     
-    def __init__(self, device: str = 'cpu'):
+    def __init__(self, device: str = 'cpu', bert_model_type:str = "/home/dataset-local/projects/Data/HF_models/biobert-large-cased-v1.1"):
         self.bleu = evaluate.load(path="./eval/metrics/bleu")
         self.rouge = evaluate.load(path="./eval/metrics/rouge")
         self.bert_score = evaluate.load(path="./eval/metrics/bertscore")
-        self.bert_model_type = "/home/djy/projects/Data/HF_models/biobert-large-cased-v1.1"
+        self.bert_model_type = bert_model_type
 
         self.device = device
         self.reset()
@@ -95,7 +108,7 @@ class LanguageMetrics:
         """Compute language metrics. To be implemented."""
         res_bleu = self.bleu.compute(predictions=self.pred_texts, references=self.target_texts)
         res_rouge = self.rouge.compute(predictions=self.pred_texts, references=self.target_texts)
-        res_bertscore = self.bert_score.compute(predictions=self.pred_texts, references=self.target_texts, model_type=self.bert_model_type, num_layers=24)
+        res_bertscore = self.bert_score.compute(predictions=self.pred_texts, references=self.target_texts, model_type=self.bert_model_type, num_layers=24) if self.bert_model_type is not None else None
 
         def Average(lst):
             return sum(lst) / len(lst)
@@ -103,7 +116,7 @@ class LanguageMetrics:
         return {
             'bleu': res_bleu,
             'rouge_l': res_rouge,
-            'meteor': Average(res_bertscore['f1'])
+            'meteor': Average(res_bertscore['f1']) if res_bertscore is not None else 0
         }
 
 
@@ -130,7 +143,8 @@ class ReferenceMetrics:
                  embedding_model: str = 'all-MiniLM-L6-v2',
                  interpro_db_path: str = "/home/lfj/projects_dir/FragLLM/data/new_interpro_metadata_short_with_fragment_type_v3.json",
                  cache_dir: str = "/home/lfj/projects_dir/FragLLM/eval/cache",
-                 batch_size: int = 32):
+                 batch_size: int = 32,
+                 bert_model_type: str = "/home/dataset-local/projects/Data/HF_models/biobert-large-cased-v1.1"):
         
         self.device = device
         self.embedding_model_name = embedding_model
@@ -141,7 +155,6 @@ class ReferenceMetrics:
         
         # Initialize InterPro database
         self.interpro_data = self._load_interpro_database()
-        
         # Cache for label embeddings
         self.label_embeddings_cache = None
         self.interpro_ids_list = None
@@ -158,7 +171,7 @@ class ReferenceMetrics:
         )
         
         # Initialize language metrics
-        self.lang_metrics = LanguageMetrics(device=device)
+        self.lang_metrics = LanguageMetrics(device=device, bert_model_type=bert_model_type)
         
         # Track what type of data has been added
         self.has_labels = False
@@ -227,6 +240,7 @@ class ReferenceMetrics:
         
         # Encode all descriptions in batches to avoid OOM
         self._initialize_embedding_model()
+        import pdb; pdb.set_trace()
         if self.embedding_model is None:
             raise ValueError("Embedding model not available for computing label embeddings")
         
@@ -508,74 +522,75 @@ if __name__ == "__main__":
     print("=== Initializing InterPro-based Evaluation System ===")
     metrics = ReferenceMetrics(
         device='cuda',
-        embedding_model="/home/lfj/projects_dir/pretrained_model/Qwen3-Embedding-0.6B",
-        interpro_db_path="/home/lfj/projects_dir/FragLLM/data/new_interpro_metadata_short_with_fragment_type_v3.json",
-        cache_dir="/home/lfj/projects_dir/FragLLM/eval/cache",
-        batch_size=16
+        embedding_model=args.embedding_model,
+        interpro_db_path=args.interpro_db_path,
+        cache_dir=args.cache_dir,
+        batch_size=args.batch_size,
+        bert_model_type=args.bert_model_type
     )
     print(f"System ready with {metrics.num_labels} InterPro classes\n")
 
-    # ============ Four Input Modes Examples ============
+    # # ============ Four Input Modes Examples ============
     
-    # Mode 1: Traditional Label-only Classification
-    print("=== Mode 1: Traditional Classification ===")
-    metrics.reset()
-    metrics.update(
-        pred_labels=[0, 1, 2, 1, 0],  # Predicted class indices
-        target_labels=[0, 1, 1, 1, 0]  # True class indices
-    )
-    results = metrics.compute()
-    print("Traditional classification results:", results)
-    print("✓ Only classification metrics computed\n")
+    # # Mode 1: Traditional Label-only Classification
+    # print("=== Mode 1: Traditional Classification ===")
+    # metrics.reset()
+    # metrics.update(
+    #     pred_labels=[0, 1, 2, 1, 0],  # Predicted class indices
+    #     target_labels=[0, 1, 1, 1, 0]  # True class indices
+    # )
+    # results = metrics.compute()
+    # print("Traditional classification results:", results)
+    # print("✓ Only classification metrics computed\n")
 
-    # Mode 2: InterPro Text Retrieval (Core functionality)
-    print("=== Mode 2: InterPro Text Retrieval ===")
-    metrics.reset()
-    metrics.update(
-        pred_texts=[
-            "A glycine-rich domain involved in microtubule organization and cytoskeletal transport",
-            "C-terminal domain found in signal-induced proliferation proteins with GTPase activity"
-        ],
-        target_interpro_ids=["IPR000938", "IPR021818"]  # True InterPro IDs from database
-    )
-    results = metrics.compute()
-    print("InterPro retrieval results:", results)
-    print("✓ Classification via retrieval against full InterPro database\n")
+    # # Mode 2: InterPro Text Retrieval (Core functionality)
+    # print("=== Mode 2: InterPro Text Retrieval ===")
+    # metrics.reset()
+    # metrics.update(
+    #     pred_texts=[
+    #         "A glycine-rich domain involved in microtubule organization and cytoskeletal transport",
+    #         "C-terminal domain found in signal-induced proliferation proteins with GTPase activity"
+    #     ],
+    #     target_interpro_ids=["IPR000938", "IPR021818"]  # True InterPro IDs from database
+    # )
+    # results = metrics.compute()
+    # print("InterPro retrieval results:", results)
+    # print("✓ Classification via retrieval against full InterPro database\n")
 
-    # Mode 3: Language Metrics Only
-    print("=== Mode 3: Language Metrics Only ===")
-    metrics.reset()
-    metrics.update(
-        pred_texts=[
-            "The CAP-Gly domain is involved in cytoskeletal organization",
-            "SIPA1L domain regulates GTPase signaling pathways"
-        ],
-        target_texts=[
-            "CAP-Gly domain for microtubule organization and vesicle transport",
-            "SIPA1L C-terminal domain for signal-induced proliferation regulation"
-        ]
-    )
-    results = metrics.compute()
-    print("Language-only results:", results)
-    print("✓ Only language metrics (BLEU, ROUGE, etc.) computed\n")
+    # # Mode 3: Language Metrics Only
+    # print("=== Mode 3: Language Metrics Only ===")
+    # metrics.reset()
+    # metrics.update(
+    #     pred_texts=[
+    #         "The CAP-Gly domain is involved in cytoskeletal organization",
+    #         "SIPA1L domain regulates GTPase signaling pathways"
+    #     ],
+    #     target_texts=[
+    #         "CAP-Gly domain for microtubule organization and vesicle transport",
+    #         "SIPA1L C-terminal domain for signal-induced proliferation regulation"
+    #     ]
+    # )
+    # results = metrics.compute()
+    # print("Language-only results:", results)
+    # print("✓ Only language metrics (BLEU, ROUGE, etc.) computed\n")
 
-    # Mode 4: Combined Evaluation (Most comprehensive)
-    print("=== Mode 4: Combined Evaluation ===")
-    metrics.reset()
-    metrics.update(
-        pred_texts=[
-            "Domain with glycine-rich sequence for microtubule binding",
-            "Protein domain that activates GTPases in proliferation signaling"
-        ],
-        target_interpro_ids=["IPR000938", "IPR021818"],  # For classification metrics
-        target_texts=[
-            "CAP-Gly domain: cytoskeleton-associated protein domain",
-            "SIPA1L domain: signal-induced proliferation-associated domain"
-        ]  # For language metrics
-    )
-    results = metrics.compute()
-    print("Combined evaluation results:", results)
-    print("✓ Both classification (via InterPro) AND language metrics computed\n")
+    # # Mode 4: Combined Evaluation (Most comprehensive)
+    # print("=== Mode 4: Combined Evaluation ===")
+    # metrics.reset()
+    # metrics.update(
+    #     pred_texts=[
+    #         "Domain with glycine-rich sequence for microtubule binding",
+    #         "Protein domain that activates GTPases in proliferation signaling"
+    #     ],
+    #     target_interpro_ids=["IPR000938", "IPR021818"],  # For classification metrics
+    #     target_texts=[
+    #         "CAP-Gly domain: cytoskeleton-associated protein domain",
+    #         "SIPA1L domain: signal-induced proliferation-associated domain"
+    #     ]  # For language metrics
+    # )
+    # results = metrics.compute()
+    # print("Combined evaluation results:", results)
+    # print("✓ Both classification (via InterPro) AND language metrics computed\n")
 
     # ============ CSV Usage Examples ============
     print("=== CSV Usage Examples ===")
@@ -590,6 +605,13 @@ if __name__ == "__main__":
     print("# )")
     print("# → Returns both classification and language metrics")
     print()
+    results = metrics.load_from_csv(
+        csv_path=args.results_path,
+        pred_text_col='generated',
+        target_text_col='reference',
+        target_interpro_id_col='interpro_ids'
+    )
+    print(results)
     
     # CSV Example 2: InterPro retrieval only
     print("# InterPro retrieval only:")

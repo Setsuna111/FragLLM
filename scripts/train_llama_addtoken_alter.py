@@ -669,7 +669,7 @@ def train(active_datasets, model, epoch, scheduler, writer, dataset_iters, torch
     model.train()
     end = time.time()
     for global_step in range(args.steps_per_epoch):
-        if epoch == 0: # warmup for segm
+        if epoch <= 2: # warmup for segm
             for _ in range(args.gradient_accumulation_steps):
                 # Select data loader based on step choice
                 dataset_type = "grounding"

@@ -2,7 +2,8 @@ import sys
 sys.path.append('.')
 from transformers import AutoTokenizer
 # from models.protein_llama import ProteinLlamaForCausalLM
-from models.protein_llama_lfj import ProteinLlamaForCausalLM  # model debug
+from models.protein_llama_addtoken_lfj import ProteinLlamaForCausalLM  # model debug
+from models.protein_llama_addtoken_djy import ProteinLlamaForCausalLM_Simple
 from dataset.dataloader_function import FunctionDataset
 from dataset.dataloader_referring import *
 from dataset.dataloader_frag import FragDataCollator
@@ -16,7 +17,7 @@ import os
 import argparse
 from eval.ddp import *
 
-SET_perceiver_latent_size = 8
+# SET_perceiver_latent_size = 8
 
 # Dataset configurations
 FUNCTION_DATASETS = {
@@ -59,10 +60,14 @@ def parse_args():
     parser.add_argument('--world_size', default=1, type=int, help='number of distributed processes')
     parser.add_argument('--local_rank', default=-1, type=int)
     parser.add_argument('--dist_url', default='env://', help='url used to set up distributed training')
+
+    # model_type
+    parser.add_argument('--pos_decoder_type', default="ProteinSAM", help='type of position decoder to use')
+    parser.add_argument('--perceiver_latent_size', default=1, type=int, help='number of perceiver latent size')
     
     return parser.parse_args()
 
-def create_dataset(dataset_name, root_dir, split, max_sequence_length=1021):
+def create_dataset(dataset_name, root_dir, split, perceiver_latent_size, max_sequence_length=1021):
     """Create dataset based on dataset name"""
     if dataset_name in FUNCTION_DATASETS:
         config = FUNCTION_DATASETS[dataset_name]
@@ -81,7 +86,7 @@ def create_dataset(dataset_name, root_dir, split, max_sequence_length=1021):
             root_dir=root_dir,
             split=split,
             max_sequence_length=max_sequence_length,
-            perceiver_latent_size=SET_perceiver_latent_size
+            perceiver_latent_size=perceiver_latent_size
         )
     else:
         raise ValueError(f"Unknown dataset: {dataset_name}. "
@@ -93,7 +98,7 @@ def evaluate_dataset(dataset_name, model, tokenizer, sequence_tokenizer, data_co
     print(f"\n=== Evaluating {dataset_name} dataset ===")
     
     # Create dataset
-    eval_dataset = create_dataset(dataset_name, args.root_dir, args.split)
+    eval_dataset = create_dataset(dataset_name, args.root_dir, args.split, args.perceiver_latent_size)
     print(f'Dataset {dataset_name} loaded with {len(eval_dataset)} samples')
     
     # Create dataloader
@@ -116,6 +121,7 @@ def evaluate_dataset(dataset_name, model, tokenizer, sequence_tokenizer, data_co
     generated = []
     references = []
     dataset_idx_list = []
+    interpro_ids_list = []
     
     print(f"Starting evaluation on {dataset_name}...")
     for inputs in tqdm(dataloader, desc=f"Evaluating {dataset_name}"):
@@ -127,7 +133,7 @@ def evaluate_dataset(dataset_name, model, tokenizer, sequence_tokenizer, data_co
                  for k, v in inputs.items()}
         
         dataset_idx_list += inputs.get('dataset_idxs', [None]*inputs['input_ids'].size(0))
-
+        interpro_ids_list += inputs.get('interpro_ids', [None]*inputs['input_ids'].size(0))
         # Generate responses
         # generated += tokenizer.batch_decode(inputs['answer_input_ids'], skip_special_tokens=True)  # 0904 debug，代替实际生成过程
 
@@ -157,7 +163,8 @@ def evaluate_dataset(dataset_name, model, tokenizer, sequence_tokenizer, data_co
         data = {
             'generated': generated,
             'reference': references,
-            'dataset_idx': dataset_idx_list
+            'dataset_idx': dataset_idx_list,
+            'interpro_ids': interpro_ids_list
         }
         df = pd.DataFrame(data)
         df.to_csv(save_results_path, index=False)
@@ -170,7 +177,8 @@ def evaluate_dataset(dataset_name, model, tokenizer, sequence_tokenizer, data_co
             data = {
                 'generated': generated,
                 'reference': references,
-                'dataset_idx': dataset_idx_list
+                'dataset_idx': dataset_idx_list,
+                'interpro_ids': interpro_ids_list
             }
             df = pd.DataFrame(data)
             df.to_csv(partial_save_path, index=False)
@@ -181,7 +189,7 @@ def evaluate_dataset(dataset_name, model, tokenizer, sequence_tokenizer, data_co
             # Only rank 0 merges all results
             if torch.distributed.get_rank() == 0:
                 print(f"Rank 0: Merging results from all GPUs...")
-                all_data = {'generated': [], 'reference': [], 'dataset_idx': []}
+                all_data = {'generated': [], 'reference': [], 'dataset_idx': [], 'interpro_ids': []}
                 
                 # Collect results from all ranks
                 for rank in range(args.world_size):
@@ -191,6 +199,7 @@ def evaluate_dataset(dataset_name, model, tokenizer, sequence_tokenizer, data_co
                         all_data['generated'].extend(rank_df['generated'].tolist())
                         all_data['reference'].extend(rank_df['reference'].tolist())
                         all_data['dataset_idx'].extend(rank_df['dataset_idx'].tolist())
+                        all_data['interpro_ids'].extend(rank_df['interpro_ids'].tolist())
                         # Clean up partial file
                         os.remove(rank_file)
 
@@ -213,7 +222,8 @@ def evaluate_dataset(dataset_name, model, tokenizer, sequence_tokenizer, data_co
             data = {
                 'generated': generated,
                 'reference': references,
-                'dataset_idx': dataset_idx_list
+                'dataset_idx': dataset_idx_list,
+                'interpro_ids': interpro_ids_list
             }
             df = pd.DataFrame(data)
             df.to_csv(save_results_path, index=False)
@@ -255,7 +265,10 @@ def main():
     # Load model and tokenizers
     print("Loading model and tokenizers...")
     tokenizer = AutoTokenizer.from_pretrained(args.model_path, pad_token='<|reserved_special_token_0|>')
-    model = ProteinLlamaForCausalLM.from_pretrained(args.model_path)
+    if args.pos_decoder_type == "ProteinSAM":
+        model = ProteinLlamaForCausalLM.from_pretrained(args.model_path)
+    else:
+        model = ProteinLlamaForCausalLM_Simple.from_pretrained(args.model_path)
     model.config.pad_token_id = tokenizer.pad_token_id
     sequence_tokenizer = AutoTokenizer.from_pretrained(model.config.esm_path)
     

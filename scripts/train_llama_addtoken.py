@@ -54,7 +54,7 @@ class FragModelArguments:
     llama_path: Optional[str] = field(default="/home/lfj/projects_dir/pretrained_model/Llama-3.1-8B-Instruct", metadata={"help": "Path to LLaMA model"})
     load_adapter_checkpoint_dir: Optional[str] = field(default=None, metadata={"help": "Path to load adapter checkpoint"})
     load_fragment_checkpoint_dir: Optional[str] = field(default=None, metadata={"help": "Path to load fragment checkpoint"})
-    load_pro2text_checkpoint_dir: Optional[str] = field(default='/home/lfj/projects_dir/pretrained_model/Prot2Text-V2-11B-Instruct-hf', metadata={"help": "Path to load fragment checkpoint"})
+    load_pro2text_checkpoint_dir: Optional[str] = field(default=None, metadata={"help": "Path to load fragment checkpoint"})
     
     # Grounding model arguments
     protein_sam_checkpoint_path: Optional[str] = field(default='/home/lfj/projects_dir/FragLLM/model_grounding_segformer/checkpoints_grounding_3B/checkpoint_epoch_0.pt', metadata={"help": "Path to ProteinSAM checkpoint (.pt file). Required for training."})
