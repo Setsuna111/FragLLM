@@ -12,7 +12,7 @@ sys.path.append("..")
 sys.path.append(".")
 
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "4"
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
 import pathlib
 import transformers
@@ -50,14 +50,14 @@ def rank0_print(*args):
 @dataclass
 class FragModelArguments:
     """Model arguments for fragment training."""
-    esm_path: Optional[str] = field(default="/home/lfj/projects_dir/pretrained_model/esm2_t36_3B_UR50D", metadata={"help": "Path to ESM model"})
-    llama_path: Optional[str] = field(default="/home/lfj/projects_dir/pretrained_model/Llama-3.1-8B-Instruct", metadata={"help": "Path to LLaMA model"})
+    esm_path: Optional[str] = field(default="/home/dataset-local/projects_dir/pretrained_model/esm2_t36_3B_UR50D", metadata={"help": "Path to ESM model"})
+    llama_path: Optional[str] = field(default="/home/dataset-local/projects_dir/pretrained_model/Llama-3.1-8B-Instruct", metadata={"help": "Path to LLaMA model"})
     load_adapter_checkpoint_dir: Optional[str] = field(default=None, metadata={"help": "Path to load adapter checkpoint"})
     load_fragment_checkpoint_dir: Optional[str] = field(default=None, metadata={"help": "Path to load fragment checkpoint"})
-    load_pro2text_checkpoint_dir: Optional[str] = field(default='/home/lfj/projects_dir/pretrained_model/Prot2Text-V2-11B-Instruct-hf', metadata={"help": "Path to load fragment checkpoint"})
+    load_pro2text_checkpoint_dir: Optional[str] = field(default="/home/dataset-local/projects_dir/pretrained_model/Prot2Text-V2-11B-Instruct-hf", metadata={"help": "Path to load fragment checkpoint"})
     
     # Grounding model arguments
-    protein_sam_checkpoint_path: Optional[str] = field(default='/home/lfj/projects_dir/FragLLM/model_grounding_segformer/checkpoints_grounding_3B/checkpoint_epoch_0.pt', metadata={"help": "Path to ProteinSAM checkpoint (.pt file). Required for training."})
+    protein_sam_checkpoint_path: Optional[str] = field(default='./model_grounding_segformer/checkpoints_grounding_3B/best_model.pt', metadata={"help": "Path to ProteinSAM checkpoint (.pt file). Required for training."})
     
     # Model architecture arguments
     fix_modality_adapter: Optional[bool] = field(default=False, metadata={"help": "Whether to fix modality adapter"})
@@ -92,8 +92,8 @@ class FragDataArguments:
     """Data arguments for fragment training."""
     root_dir: Optional[str] = field(default="./data", metadata={"help": "Root directory for datasets"})
     use_detailed_template: Optional[bool] = field(default=False, metadata={"help": "Whether to use detailed template"})
-    # dataset_train_config: Optional[str] = field(default="ActGroundSingle||ActRefClass", metadata={"help": "Dataset config for training"})
-    dataset_train_config: Optional[str] = field(default="ActRefClass", metadata={"help": "Dataset config for training"})
+    dataset_train_config: Optional[str] = field(default="ActGroundSingle||ActRefClass", metadata={"help": "Dataset config for training"})
+    # dataset_train_config: Optional[str] = field(default="ActRefClass", metadata={"help": "Dataset config for training"})
     dataset_valid_config: Optional[str] = field(default=None, metadata={"help": "Dataset config for evaluation"})
     max_sequence_length: Optional[int] = field(default=1021, metadata={"help": "Maximum sequence length"})
     filter_sequence: Optional[bool] = field(default=False, metadata={"help": "Whether to filter sequence"})

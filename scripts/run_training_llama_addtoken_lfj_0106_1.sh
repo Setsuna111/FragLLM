@@ -10,10 +10,10 @@ export TOKENIZERS_PARALLELISM=false
 # --include localhost:0
 # "ActGroundSingle||BindIGroundSingle||MotifGroundSingle||DomGroundSingle||EvoGroundSingle||ActGroundGroup||BindIGroundGroup||DomGroundGroup||EvoGroundGroup||MotifGroundGroup"
 export DS_SKIP_CUDA_CHECK=1
-deepspeed --include "localhost:4" --master_port $MASTER_PORT  scripts/train_llama_addtoken.py \
-    --esm_path "/home/lfj/projects_dir/pretrained_model/esm2_t36_3B_UR50D" \
-    --llama_path "/home/lfj/projects_dir/pretrained_model/Llama-3.1-8B-Instruct" \
-    --load_pro2text_checkpoint_dir '/home/lfj/projects_dir/pretrained_model/Prot2Text-V2-11B-Instruct-hf' \
+deepspeed --include "localhost:0,1,2,3" --master_port $MASTER_PORT  scripts/train_llama_addtoken.py \
+    --esm_path "/home/dataset-local/projects_dir/pretrained_model/esm2_t36_3B_UR50D" \
+    --llama_path "/home/dataset-local/projects_dir/pretrained_model/Llama-3.1-8B-Instruct" \
+    --load_pro2text_checkpoint_dir "/home/dataset-local/projects_dir/pretrained_model/Prot2Text-V2-11B-Instruct-hf" \
     --protein_sam_checkpoint_path './model_grounding_segformer/checkpoints_grounding_3B/best_model.pt' \
     --use_detailed_template True \
     --frag_adapter_type "multilevel" \
@@ -29,7 +29,7 @@ deepspeed --include "localhost:4" --master_port $MASTER_PORT  scripts/train_llam
     --dataset_train_config "ActGroundSingle||BindIGroundSingle||MotifGroundSingle||DomGroundSingle||EvoGroundSingle||ActGroundGroup||BindIGroundGroup||DomGroundGroup||EvoGroundGroup||MotifGroundGroup" \
     --max_sequence_length 1021 \
     --filter_sequence False \
-    --output_dir "/home/lfj/projects_dir/FragLLM/checkpoints/hybrid_tasks_base" \
+    --output_dir "/home/dataset-local/projects_dir/FragLLM/checkpoints/0325_grounding_all" \
     --num_train_epochs 50 \
     --per_device_train_batch_size 2 \
     --per_device_eval_batch_size 4 \

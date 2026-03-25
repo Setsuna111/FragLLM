@@ -30,6 +30,7 @@ model_grounding_segformer/logs/
 model_grounding_segformer/tensorboard/
 model_grounding_segformer/category_embeddings_old_origin_llama.pt
 model_grounding_segformer/checkpoints_grounding_3B/
+utils_cmd.txt
 
 
 CLAUDE.md
