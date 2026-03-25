@@ -181,7 +181,8 @@ def compute_distance(positions_pre, positions_ref):
     distance = 0
     for pos_pre, pos_ref in zip(positions_pre, positions_ref):
         distance += abs(pos_pre[0] - pos_ref[0]) + abs(pos_pre[1] - pos_ref[1])
-    distance = distance / len(positions_pre) if len(positions_pre) != 0 else 0
+    if len(positions_pre) != 0:
+        distance /= len(positions_pre)
     return distance
 
 # Compute the iou between the positions
@@ -202,7 +203,8 @@ def compute_iou(positions_pre, positions_ref):
             iou += 0
         else:
             iou += intersection / union
-    iou = iou / len(positions_pre) if len(positions_pre) != 0 else 0
+    if len(positions_pre) != 0:
+        iou /= len(positions_pre)
     return iou, unions, intersections
 
 def compute_iou_single(pos_pre, pos_ref):

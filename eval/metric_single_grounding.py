@@ -85,7 +85,8 @@ def compute_distance(positions_pre, positions_ref):
     distance = 0
     for pos_pre, pos_ref in zip(positions_pre, positions_ref):
         distance += abs(pos_pre[0] - pos_ref[0]) + abs(pos_pre[1] - pos_ref[1])
-    distance /= len(positions_pre)
+    if len(positions_pre) != 0:
+        distance /= len(positions_pre)
     return distance
 
 # Compute the iou between the positions
@@ -106,7 +107,8 @@ def compute_iou(positions_pre, positions_ref):
             iou += 0
         else:
             iou += intersection / union
-    iou /= len(positions_pre)
+    if len(positions_pre) != 0:
+        iou /= len(positions_pre)
     return iou, unions, intersections
 
 def compute_iou_single(pos_pre, pos_ref):
@@ -180,6 +182,7 @@ def evaluate_single_grounding(args: Dict[str, Any]) -> Dict[str, Any]:
         # 计算当前样本TP数
         TP_nums.append(compute_TP(matched_pred_positions, matched_ref_positions, args.iou_threshold))
     # 计算平均miou, unions, intersections
+    # import pdb; pdb.set_trace()
     avg_iou = sum(ious) / len(ious)
     global_iou = sum(intersections_list) / sum(unions_list)
     # 计算平均起止位置距离

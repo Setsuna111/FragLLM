@@ -54,6 +54,26 @@ class ProteinLlamaForCausalLM_Simple(LlamaForCausalLM, ProteinMetaForCausalLM):
         mask = input_ids == self.config.sequence_placeholder_id
         return mask
     
+    def _inference_path(self, input_ids, attention_mask, position_ids, past_key_values, inputs_embeds, labels, protein_input_ids, protein_attention_mask, protein_position_ids, protein_head_mask, protein_inputs_embeds, position_refs, position_grds, use_cache, output_attentions, output_hidden_states, return_dict, return_encoder_outputs, return_adapter_outputs, return_decoder_inputs, cache_position, **kwargs):
+        if inputs_embeds is None:
+            input_ids, position_ids, attention_mask, past_key_values, inputs_embeds, labels, encoder_output, adapter_output, encoder_attention_mask, protein_encoder_hidden_states = self.prepare_inputs_labels_for_protein(
+                input_ids, position_ids, attention_mask, past_key_values, labels,
+                protein_input_ids, protein_attention_mask, protein_position_ids, protein_head_mask, protein_inputs_embeds, position_refs, output_attentions,output_hidden_states,return_dict
+            )
+        output = super().forward(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                position_ids=position_ids,
+                past_key_values=past_key_values,
+                inputs_embeds=inputs_embeds,
+                labels=labels,
+                use_cache=use_cache,
+                output_attentions=output_attentions,
+                output_hidden_states=True,
+                return_dict=True
+            )
+        return output['hidden_states'][-1] # 最后一层的hidden states
+    
     def model_forward(
             self, 
             # chat template text inputs
@@ -209,7 +229,7 @@ class ProteinLlamaForCausalLM_Simple(LlamaForCausalLM, ProteinMetaForCausalLM):
     ) -> Union[Tuple, CausalLMOutputWithPast]: 
         if past_key_values is not None:
             if inputs_embeds is None:
-                input_ids, position_ids, attention_mask, past_key_values, inputs_embeds, labels, encoder_output, adapter_output, encoder_attention_mask = self.prepare_inputs_labels_for_protein(
+                input_ids, position_ids, attention_mask, past_key_values, inputs_embeds, labels, encoder_output, adapter_output, encoder_attention_mask, encoder_hidden_states = self.prepare_inputs_labels_for_protein(
                     input_ids, position_ids, attention_mask, past_key_values, labels,
                     protein_input_ids, protein_attention_mask, protein_position_ids, protein_head_mask, protein_inputs_embeds, position_refs,output_attentions,output_hidden_states,return_dict
                 )
@@ -278,7 +298,7 @@ class ProteinLlamaForCausalLM_Simple(LlamaForCausalLM, ProteinMetaForCausalLM):
         grounding_inference: bool = False,
         **kwargs
     ) -> Union[GenerateOutput, torch.LongTensor]:
-        input_ids, position_ids, attention_mask, past_key_values, inputs_embeds, labels, encoder_output, adapter_output, encoder_attention_mask = self.prepare_inputs_labels_for_protein(
+        input_ids, position_ids, attention_mask, past_key_values, inputs_embeds, labels, encoder_output, adapter_output, encoder_attention_mask, encoder_hidden_states = self.prepare_inputs_labels_for_protein(
                 input_ids, None, attention_mask, None, None,
                 protein_input_ids, protein_attention_mask, None, None, protein_inputs_embeds, position_refs,None,None,None
             )
@@ -337,7 +357,7 @@ class ProteinLlamaForCausalLM_Simple(LlamaForCausalLM, ProteinMetaForCausalLM):
                         # 奇数位置坐标+1，偶数位置坐标不变
                         position_grds_pred_i = position_grds_pred[i].argmax(dim=-1)
                         position_grds_pred_i[1::2] += 1
-                        position_grds_batch.append(position_grds_pred_i)
+                        position_grds_batch.append(position_grds_pred_i.cpu().numpy())
 
         # 将预测值恢复成坐标位置
 

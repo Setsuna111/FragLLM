@@ -1,3 +1,20 @@
+26-0210 djy
+1. dataset/dataloader_frag.py、dataset/dataloader_referring.py中get_item添加了"interpro_id": interpro_id的元素；
+2. eval/evaluate_reference_lfj.py结果中传入了interpro_id，实现了分类结果的评估；
+3. eval/metric_cls.py对应更新了referring的评估代码
+4. models/protein_llama_addtoken_djy.py补充了inference_path
+
+26-0120 djy
+1. train_llama_addtoken.py设置TrainingArgs中dataloader_persistent_workers=True，ddp_timeout=10800，避免训练多个epoch时出现NCCL超时的问题；
+2. 新增了模型权重merge的脚本
+3. README.md中添加了训练脚本和权重merge脚本的说明
+4. 更新了eval_grounding_addtoken.py中分母为0的小错误
+
+26-0119 djy
+1. 添加了训练过程中function/referring/grounding三种数据分别优化的训练脚本:train_llama_addtoken_alter, run_training_llama_addtoken_alter
+2. 补充了Flash-Attn的方式（加速效果不明显，带宽不是主要瓶颈）
+3. 补充了安装Flash-Attn的说明信息
+
 25-1226 djy
 1. 引入了pos_decoder_type("ProteinSAM" or "Simple")参数区分ProteinSAM decoder和Simple decoder两种架构方式
 2. grounding任务构建conversation时，区分了create_conversation_sam(for protein_sam)和create_conversation_class(for simple decoder)

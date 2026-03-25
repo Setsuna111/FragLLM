@@ -107,6 +107,7 @@ class FragDataCollator:
         position_grds = [item["position_grd"] for item in batch]
         starts = [item["start"] for item in batch]
         dataset_idxs = [item["dataset_idx"] for item in batch] if "dataset_idx" in batch[0] else None
+        interpro_ids = [item["interpro_id"] for item in batch] if "interpro_id" in batch[0] else None
         # truncate and tokenize sequences
         self.sequence_tokenizer.padding_side = "right"
         tokenized_sequences = self.sequence_tokenizer(
@@ -178,6 +179,7 @@ class FragDataCollator:
                 "position_refs": position_refs,
                 "position_grds": position_grds,
                 "starts": starts,
+                "interpro_ids": interpro_ids
             }
 
         elif self.mode == "inference":
@@ -194,7 +196,8 @@ class FragDataCollator:
                 "position_refs": position_refs,
                 "position_grds": position_grds,
                 "starts": starts,
-                "dataset_idxs": dataset_idxs
+                "dataset_idxs": dataset_idxs,
+                "interpro_ids": interpro_ids
             }
 
         else: 
@@ -336,6 +339,62 @@ class HybridValidDataset(HybridDatasetBase):
             epoch_samples=epoch_samples, 
             **kwargs,
             )
+# For alter training
+class HybridFuncDataset(HybridDatasetBase):
+    def __init__(self, 
+            root_dir: str, 
+            data_func: str, 
+            split: str, 
+            max_sequence_length: Optional[int] = 1021, 
+            epoch_samples: Optional[int] = None,
+            **kwargs,
+            ):
+        data_list = data_func.split("||")
+        super().__init__(
+            root_dir=root_dir, 
+            data_list=data_list, 
+            split=split, 
+            max_sequence_length=max_sequence_length, 
+            epoch_samples=epoch_samples, 
+            **kwargs,
+            )
+
+class HybridReferringDataset(HybridDatasetBase):
+    def __init__(self, 
+            root_dir: str, 
+            data_referring: str, 
+            split: str, 
+            max_sequence_length: Optional[int] = 1021, 
+            epoch_samples: Optional[int] = None,
+            **kwargs,
+            ):
+        data_list = data_referring.split("||")
+        super().__init__(
+            root_dir=root_dir, 
+            data_list=data_list, 
+            split=split, 
+            max_sequence_length=max_sequence_length, 
+            epoch_samples=epoch_samples, 
+            **kwargs,
+            )
+class HybridGroundingDataset(HybridDatasetBase):
+    def __init__(self, 
+            root_dir: str, 
+            data_grounding: str, 
+            split: str, 
+            max_sequence_length: Optional[int] = 1021, 
+            epoch_samples: Optional[int] = None,
+            **kwargs,
+            ):
+        data_list = data_grounding.split("||")
+        super().__init__(
+            root_dir=root_dir, 
+            data_list=data_list, 
+            split=split, 
+            max_sequence_length=max_sequence_length, 
+            epoch_samples=epoch_samples, 
+            **kwargs,
+            )
 
 """Based on HybridDatasetBase"""
 def make_multitask_dataset(data_args):
@@ -372,18 +431,24 @@ def make_multitask_dataset(data_args):
 class FragDataArguments:
     """Data arguments for fragment training."""
     root_dir: Optional[str] = field(default="./data", metadata={"help": "Root directory for datasets"})
-    dataset_train_config: Optional[str] = field(default="ProFunction||ActRefClass||BindIRefClass||DomRefClass||EvoRefClass||MotifRefClass", metadata={"help": "Dataset config for training"})
+    dataset_train_config: Optional[str] = field(default="ActRefClass||BindIRefClass||DomRefClass||EvoRefClass||MotifRefClass||ActRefDesc||BindIRefDesc||DomRefDesc||EvoRefDesc||MotifRefDesc", metadata={"help": "Dataset config for training"})
     dataset_valid_config: Optional[str] = field(default="ProFunction", metadata={"help": "Dataset config for evaluation"})
-    sequence_tokenizer_path: Optional[str] = field(default="/home/djy/projects/Data/HF_models/esm2_t36_3B_UR50D", metadata={"help": "Sequence tokenizer"})
-    llm_tokenizer_path: Optional[str] = field(default="/home/djy/projects/Data/HF_models/RedHatAI-Llama-3.1-8B-Instruct", metadata={"help": "LLM tokenizer"})
+    sequence_tokenizer_path: Optional[str] = field(default="/home/dataset-local/projects/Data/HF_models/esm2_t36_3B_UR50D", metadata={"help": "Sequence tokenizer"})
+    llm_tokenizer_path: Optional[str] = field(default="/home/dataset-local/projects/Data/HF_models/Meta-Llama-3.1-8B-Instruct", metadata={"help": "LLM tokenizer"})
     max_sequence_length: Optional[int] = field(default=1021, metadata={"help": "Maximum sequence length"})
     filter_sequence: Optional[bool] = field(default=False, metadata={"help": "Whether to filter sequence"})
     sequence_placeholder: Optional[str] = field(default="<|reserved_special_token_1|>", metadata={"help": "Sequence placeholder"})
     fragment_placeholder: Optional[str] = field(default="<|reserved_special_token_2|>", metadata={"help": "Fragment placeholder"})
-    pos_start_placeholder: Optional[str] = field(default="<|reserved_special_token_3|>", metadata={"help": "Position start placeholder"})
-    pos_end_placeholder: Optional[str] = field(default="<|reserved_special_token_4|>", metadata={"help": "Position end placeholder"})
+    # For SimpleDecoder
+    pos_start_placeholder: Optional[str] = field(default="<frag_start>", metadata={"help": "Position start placeholder"})
+    pos_end_placeholder: Optional[str] = field(default="<frag_end>", metadata={"help": "Position end placeholder"})
+    phrase_start_placeholder: Optional[str] = field(default="<p>", metadata={"help": "Phrase start placeholder"})
+    phrase_end_placeholder: Optional[str] = field(default="</p>", metadata={"help": "Phrase end placeholder"})
+    use_detailed_template: Optional[bool] = field(default=True, metadata={"help": "Whether to use detailed template"})
+    pos_decoder_type: Optional[str] = field(default="Simple", metadata={"help": "Pos decoder type: 'ProteinSAM', 'Simple'"})
     system_message: Optional[str] = field(default="You are a scientific assistant specializing in protein sequence analysis. Based on protein sequence embeddings and other related information, please answer the relevant questions using professional language. ", metadata={"help": "System message"})
     dataset_size: Optional[int] = field(default=-1, metadata={"help": "Dataset size for function dataset. -1 means use full dataset, otherwise truncate to this size"})
+    perceiver_latent_size: Optional[int] = field(default=1, metadata={"help": "Perceiver latent size"})
     def __repr__(self):
         # 获取 dataclass 默认字段
         fields = {field.name: getattr(self, field.name) for field in self.__dataclass_fields__.values()}
@@ -407,7 +472,7 @@ if __name__ == "__main__":
         num_workers=0,
         collate_fn=data_module["data_collator"],
         pin_memory=True, 
-        drop_last=True
+        drop_last=False
     )
     for batch in train_dataloader:
         print(batch)

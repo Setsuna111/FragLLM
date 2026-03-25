@@ -133,6 +133,18 @@ class FragTrainingArguments(TrainingArguments):
     warmup_ratio: Optional[float] = field(default=0.03, metadata={"help": "Warmup ratio"})
     logging_steps: Optional[int] = field(default=1, metadata={"help": "Logging steps"})
     dataloader_num_workers: Optional[int] = field(default=4, metadata={"help": "Number of workers for dataloader"})
+    # ===【新增/修改】启用持久化 worker ===
+    #  如果为True，数据加载器在数据集被消耗一次后不会关闭工作进程。 这允许保持工作进程的Dataset实例存活。可能会加速训练，但会增加RAM使用量。默认为False.
+    dataloader_persistent_workers: bool = field(
+        default=True, 
+        metadata={"help": "If True, the data loader will not shut down the worker processes after a dataset has been consumed once."}
+    )
+    # ===【新增/修改】增加 DDP 超时时间（例如设为 3 小时）===
+    # 避免之前30min超时
+    ddp_timeout: int = field(
+        default=10800,  # 3小时 = 10800秒
+        metadata={"help": "DDDP timeout in seconds."}
+    )
     remove_unused_columns: Optional[bool] = field(default=False, metadata={"help": "Remove unused columns"})
     bf16: bool = field(default=True, metadata={"help": "Whether to use bf16"})
     tf32: bool = field(default=True, metadata={"help": "Whether to use tf32"})
@@ -473,7 +485,7 @@ def train(attn_implementation=None):
         rank0_print("Loaded Prot2Text llama_decoder weights from ", model_args.load_pro2text_checkpoint_dir)
 
     model.config.use_cache = False
-    if model_args.freeze_backbone:
+    if  model_args.freeze_backbone:
         model.model.requires_grad_(False)
 
     if training_args.gradient_checkpointing:
@@ -596,7 +608,8 @@ def train(attn_implementation=None):
         if training_args.freeze_fragment_adapter:
             for p in model.get_model().fragment_adapter.parameters():
                 p.requires_grad_(False)
-        
+    rank0_print("ModelArchitecture:")
+    rank0_print(model) 
     rank0_print("ModelTrainable:")
     rank0_print([n for n, p in model.named_parameters() if p.requires_grad])
     rank0_print(model.device)

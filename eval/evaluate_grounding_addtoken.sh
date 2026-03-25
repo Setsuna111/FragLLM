@@ -12,7 +12,7 @@ MODEL_PATH="/home/lfj/projects_dir/FragLLM/checkpoints/grounding_lora_only_act_t
 ROOT_DIR="./data"
 RESULTS_DIR="./eval_results"
 MODEL_IDENTIFIER="grounding_lora_0918_trainable_iousam"  # Identifier for this model configuration
-
+POS_DECODER_TYPE="Simple"
 # Evaluation parameters
 SPLIT="test"
 BATCH_PER_DEVICE=4
@@ -82,6 +82,7 @@ if [ "$USE_SINGLE_GPU" = true ]; then
         --temperature "$TEMPERATURE" \
         --single_gpu \
         --gpu_id "$SINGLE_GPU_ID" \
+        --pos_decoder_type "$POS_DECODER_TYPE" \
         $([ "$USE_DETAILED_TEMPLATE" = true ] && echo "--use_detailed_template")
 else
     echo "Mode: Multi-GPU Distributed (GPUs: $NUM_GPUS)"
@@ -102,6 +103,7 @@ else
         --save_results_dir "$RESULTS_DIR" \
         --model_identifier "$MODEL_IDENTIFIER" \
         --temperature "$TEMPERATURE" \
+        --pos_decoder_type "$POS_DECODER_TYPE" \
         $([ "$USE_DETAILED_TEMPLATE" = true ] && echo "--use_detailed_template")
 fi
 

@@ -76,8 +76,8 @@ def replace_matches_sequentially(
             next_val = next(replacements_iter)
             # Format it into the desired string and return it
             if next_val[0] > next_val[1]:
-                return f"{next_val[1]},{next_val[0]}"
-            return f"{next_val[0]},{next_val[1]}"
+                return f"({next_val[1]},{next_val[0]})"
+            return f"({next_val[0]},{next_val[1]})"
         except StopIteration:
             # This error occurs if we run out of replacement items.
             raise ValueError("Not enough replacement items for the number of matches found.")
@@ -315,7 +315,6 @@ def evaluate_dataset_simple(dataset_name, model, tokenizer, data_collator, args,
     # Create dataset
     eval_dataset = create_dataset(dataset_name, args.root_dir, args.split, args.use_detailed_template, args.pos_decoder_type)
     print(f'Dataset {dataset_name} loaded with {len(eval_dataset)} samples')
-    
     # Create dataloader
     if args.single_gpu:
         # Single GPU mode
