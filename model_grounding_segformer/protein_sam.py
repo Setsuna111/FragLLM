@@ -275,14 +275,32 @@ class ProteinSAM(nn.Module):
         
         return outputs
     
-    def _mask_to_positions(self, mask_predictions: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        
+    def _morphological_1d(self, mask: torch.Tensor, kernel_size: int, op: str) -> torch.Tensor:
+        """Apply 1D morphological opening or closing to a binary mask."""
+        # mask: (seq_len,) float tensor with values 0/1
+        m = mask.float().unsqueeze(0).unsqueeze(0)  # (1, 1, seq_len)
+        pad = kernel_size // 2
+        if op == 'open':
+            # erosion then dilation
+            eroded = (torch.nn.functional.max_pool1d(-m, kernel_size, stride=1, padding=pad) * -1)
+            result = torch.nn.functional.max_pool1d(eroded, kernel_size, stride=1, padding=pad)
+        else:  # close
+            # dilation then erosion
+            dilated = torch.nn.functional.max_pool1d(m, kernel_size, stride=1, padding=pad)
+            result = (torch.nn.functional.max_pool1d(-dilated, kernel_size, stride=1, padding=pad) * -1)
+        return (result.squeeze(0).squeeze(0) >= 0.5).long()
+
+    def _mask_to_positions(self, mask_predictions: torch.Tensor, morph_kernel_size: int = 3) -> Tuple[torch.Tensor, torch.Tensor]:
+
         batch_size, seq_len = mask_predictions.shape
         start_positions = torch.zeros(batch_size, dtype=torch.long, device=mask_predictions.device)
         end_positions = torch.zeros(batch_size, dtype=torch.long, device=mask_predictions.device)
-        
+
         for b in range(batch_size):
             mask = mask_predictions[b]
+            # Apply morphological opening (removes small noise) then closing (fills small gaps)
+            mask = self._morphological_1d(mask, morph_kernel_size, 'open')
+            mask = self._morphological_1d(mask, morph_kernel_size, 'close')
             # Find first and last positive positions
             positive_indices = torch.where(mask == 1)[0]
             if len(positive_indices) > 0:
@@ -292,7 +310,7 @@ class ProteinSAM(nn.Module):
                 # No positive predictions - default to position 0
                 start_positions[b] = 0
                 end_positions[b] = 0
-        
+
         return start_positions, end_positions
     
     def _create_mask_labels(

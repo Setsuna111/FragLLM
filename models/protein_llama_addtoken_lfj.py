@@ -253,7 +253,8 @@ class ProteinLlamaForCausalLM(LlamaForCausalLM, ProteinMetaForCausalLM):
     ) -> Union[Tuple, CausalLMOutputWithPast]: 
         if past_key_values is not None:
             if inputs_embeds is None:
-                input_ids, position_ids, attention_mask, past_key_values, inputs_embeds, labels, encoder_output, adapter_output, encoder_attention_mask = self.prepare_inputs_labels_for_protein(
+                # 这个函数实际上用不到，generate的时候不会传入past_key_values，但是会在外面计算好inputs_embeds
+                input_ids, position_ids, attention_mask, past_key_values, inputs_embeds, labels, encoder_output, adapter_output, encoder_attention_mask, protein_encoder_hidden_states = self.prepare_inputs_labels_for_protein(
                     input_ids, position_ids, attention_mask, past_key_values, labels,
                     protein_input_ids, protein_attention_mask, protein_position_ids, protein_head_mask, protein_inputs_embeds, position_refs,output_attentions,output_hidden_states,return_dict
                 )
@@ -322,10 +323,11 @@ class ProteinLlamaForCausalLM(LlamaForCausalLM, ProteinMetaForCausalLM):
         grounding_inference: bool = False,
         **kwargs
     ) -> Union[GenerateOutput, torch.LongTensor]:
-        input_ids, position_ids, attention_mask, past_key_values, inputs_embeds, labels, encoder_output, adapter_output, encoder_attention_mask = self.prepare_inputs_labels_for_protein(
+        input_ids, position_ids, attention_mask, past_key_values, inputs_embeds, labels, encoder_output, adapter_output, encoder_attention_mask, protein_encoder_hidden_states = self.prepare_inputs_labels_for_protein(
                 input_ids, None, attention_mask, None, None,
-                protein_input_ids, protein_attention_mask, None, None, protein_inputs_embeds, position_refs,None,None,None
+                protein_input_ids, protein_attention_mask, None, None, protein_inputs_embeds, position_refs, None,None,None
             )
+
         generate_output = super().generate(
             position_ids=position_ids,
             attention_mask=attention_mask,
@@ -354,36 +356,37 @@ class ProteinLlamaForCausalLM(LlamaForCausalLM, ProteinMetaForCausalLM):
                     if position_mask.any():
                         # Use ProteinSAM for inference position prediction
                         generated_hidden_states = output_hidden_states[i]
+
+                        # Get all position tokens for this sample
+                        postoken_hidden_states_all = generated_hidden_states[position_mask]  # (num_tokens, hidden_size)
+                        num_tokens = postoken_hidden_states_all.shape[0]
                         
-                        if position_mask.any():
-                            # Get all position tokens for this sample
-                            postoken_hidden_states_all = generated_hidden_states[position_mask]  # (num_tokens, hidden_size)
-                            num_tokens = postoken_hidden_states_all.shape[0]
+                        # Process each position token separately
+                        sample_predictions = []
+                        for token_idx in range(num_tokens):
+                            # Get this specific token's hidden state
+                            postoken_hidden_states = postoken_hidden_states_all[token_idx:token_idx+1]  # (1, hidden_size)
                             
-                            # Process each position token separately
-                            sample_predictions = []
-                            for token_idx in range(num_tokens):
-                                # Get this specific token's hidden state
-                                postoken_hidden_states = postoken_hidden_states_all[token_idx:token_idx+1]  # (1, hidden_size)
-                                
-                                # Use special token embedding directly as external prompt
-                                special_token_embedding = postoken_hidden_states.unsqueeze(1)  # (1, 1, hidden_size)
-                                
-                                # Call ProteinSAM for grounding inference
-                                sam_outputs = self.get_model().protein_sam(
-                                    protein_input_ids=protein_input_ids[i:i+1],
-                                    protein_attention_mask=protein_attention_mask[i:i+1],
-                                    external_prompt_embeddings=special_token_embedding  # Use special token embedding
-                                )
-                                
-                                # Store predictions for this token
-                                sample_predictions.append({
-                                    "start_predictions": sam_outputs["start_predictions"],
-                                    "end_predictions": sam_outputs["end_predictions"] + 1  # Convert back to inclusive end
-                                })
+                            # Use special token embedding directly as external prompt
+                            special_token_embedding = postoken_hidden_states.unsqueeze(1)  # (1, 1, hidden_size)
+                            esm_embeddings = protein_encoder_hidden_states[i:i+1, 1:-1]
                             
-                            # Store all predictions for this sample
-                            position_grds_pred.append(sample_predictions)
+                            # Call ProteinSAM for grounding inference
+                            sam_outputs = self.get_model().protein_sam(
+                                # protein_input_ids=protein_input_ids[i:i+1],
+                                protein_attention_mask=protein_attention_mask[i:i+1],
+                                external_prompt_embeddings=special_token_embedding,  # Use special token embedding
+                                external_esm_embeddings=esm_embeddings,
+                            )
+                            
+                            # Store predictions for this token
+                            sample_predictions.append({
+                                "start_predictions": sam_outputs["start_predictions"],
+                                "end_predictions": sam_outputs["end_predictions"] + 1  # Convert back to inclusive end
+                            })
+                        
+                        # Store all predictions for this sample
+                        position_grds_pred.append(sample_predictions)
             else:
                 position_grds_pred = []
             
