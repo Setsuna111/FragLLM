@@ -7,7 +7,7 @@ Usage:
 """
 
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "7"
+os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 import json
 import torch
 from transformers import EsmModel, EsmTokenizer
@@ -176,7 +176,7 @@ def main():
                        default="VenusX_Dom||VenusX_Act||VenusX_BindI||VenusX_Motif||VenusX_Evo",
                        help="Dataset name(s), supports || separator for multiple datasets")
     parser.add_argument("--esm_model_path", type=str,
-                       default="/home/lfj/projects_dir/pretrained_model/esm2_t36_3B_UR50D",
+                       default="/home/dataset-local/projects_dir/pretrained_model/esm2_t36_3B_UR50D",
                        help="Path to ESM model")
     parser.add_argument("--batch_size", type=int, default=4,
                        help="Batch size for encoding (reduce if OOM)")

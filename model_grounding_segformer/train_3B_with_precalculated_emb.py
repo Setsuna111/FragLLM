@@ -417,6 +417,8 @@ def main():
                        help="Decoder intermediate size")  # 3B default
     parser.add_argument("--dropout_rate", type=float, default=0.1,
                        help="Dropout rate")
+    parser.add_argument("--use_sigmoid_head", action="store_true", default=True,
+                       help="Use N*1 sigmoid output head instead of default N*2 softmax head")
 
     # Dataset-specific arguments
     parser.add_argument("--null_position_prob", type=float, default=0.3,
@@ -521,7 +523,8 @@ def main():
         "dropout_rate": args.dropout_rate,
         "device": args.device,
         "use_category_cache": args.use_category_cache,
-        "category_embeddings_path": args.category_embeddings_path if args.use_category_cache else None
+        "category_embeddings_path": args.category_embeddings_path if args.use_category_cache else None,
+        "use_sigmoid_head": args.use_sigmoid_head
     }
 
     # Save parameters to output directory
@@ -543,7 +546,8 @@ def main():
         device=args.device,
         use_category_cache=args.use_category_cache,
         category_embeddings_path=args.category_embeddings_path if args.use_category_cache else None,
-        use_external_esm=args.use_esm_cache  # Skip loading ESM model if using cache
+        use_external_esm=args.use_esm_cache,  # Skip loading ESM model if using cache
+        use_sigmoid_head=args.use_sigmoid_head
     )
 
     model = model.to(args.device)

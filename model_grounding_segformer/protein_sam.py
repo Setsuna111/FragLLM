@@ -39,14 +39,16 @@ class ProteinSAM(nn.Module):
         use_category_cache: bool = True,
         category_embeddings_path: Optional[str] = None,
         use_external_embeddings: bool = False,  # New parameter for direct embedding input
-        use_external_esm: bool = False
+        use_external_esm: bool = False,
+        use_sigmoid_head: bool = False  # If True, use N*1 sigmoid output instead of N*2 softmax
     ):
         super().__init__()
-        
+
         self.device = device
         self.max_sequence_length = max_sequence_length
         self.use_category_cache = use_category_cache
         self.use_external_embeddings = use_external_embeddings
+        self.use_sigmoid_head = use_sigmoid_head
         
         # Initialize protein encoder
         if not use_external_esm:
@@ -111,7 +113,8 @@ class ProteinSAM(nn.Module):
             num_layers=decoder_num_layers,
             intermediate_size=decoder_intermediate_size,
             dropout_rate=dropout_rate,
-            num_self_attention_heads=decoder_num_self_attention_heads
+            num_self_attention_heads=decoder_num_self_attention_heads,
+            use_sigmoid_head=use_sigmoid_head
         )
         
         # Loss functions
@@ -237,11 +240,18 @@ class ProteinSAM(nn.Module):
             protein_embeddings=protein_embeddings_with_pos,
             prompt_embeddings=text_token_with_pos,
             protein_attention_mask=protein_attention_mask
-        )  # (batch_size, seq_len, 2)
+        )  # (batch_size, seq_len, 2) or (batch_size, seq_len, 1) if use_sigmoid_head
         
         # Get mask predictions
-        mask_predictions = torch.argmax(mask_logits, dim=-1)  # (batch_size, seq_len)
-        mask_probs = F.softmax(mask_logits, dim=-1)  # (batch_size, seq_len, 2)
+        if self.use_sigmoid_head:
+            # N*1 logit: sigmoid to get probability, threshold at 0.5 for binary prediction
+            mask_probs_fg = torch.sigmoid(mask_logits.squeeze(-1))  # (batch_size, seq_len)
+            mask_predictions = (mask_probs_fg >= 0.5).long()
+            mask_probs = mask_probs_fg  # expose raw sigmoid probs
+        else:
+            # N*2 logit: argmax for prediction, softmax for probs
+            mask_predictions = torch.argmax(mask_logits, dim=-1)  # (batch_size, seq_len)
+            mask_probs = F.softmax(mask_logits, dim=-1)  # (batch_size, seq_len, 2)
         
         # 将预测的01暂时转化为start和end，只有在训练好sam后inference时有用，这里实际上应该用更聪明一点的算法
         start_predictions, end_predictions = self._mask_to_positions(mask_predictions)
@@ -332,56 +342,63 @@ class ProteinSAM(nn.Module):
         return mask_labels
     
     def _compute_dice_loss(
-        self, 
-        mask_logits: torch.Tensor, 
-        mask_labels: torch.Tensor, 
+        self,
+        mask_logits: torch.Tensor,
+        mask_labels: torch.Tensor,
         attention_mask: torch.Tensor
     ) -> torch.Tensor:
         """Compute Dice loss for binary segmentation."""
-        # Use sigmoid on foreground logits for better gradient flow
-        pred_probs = torch.sigmoid(mask_logits[:, :, 1])  # (batch_size, seq_len)
+        if self.use_sigmoid_head:
+            # N*1: sigmoid directly on the single logit
+            pred_probs = torch.sigmoid(mask_logits.squeeze(-1))  # (batch_size, seq_len)
+        else:
+            # N*2: sigmoid on foreground logit (index 1)
+            pred_probs = torch.sigmoid(mask_logits[:, :, 1])  # (batch_size, seq_len)
+
         true_mask = mask_labels.float()  # (batch_size, seq_len)
-        
+
         # Apply attention mask
         if attention_mask is not None:
             pred_probs = pred_probs * attention_mask.float()
             true_mask = true_mask * attention_mask.float()
-        
+
         # Compute Dice coefficient
         intersection = (pred_probs * true_mask).sum(dim=1)  # (batch_size,)
         union = pred_probs.sum(dim=1) + true_mask.sum(dim=1)  # (batch_size,)
-        
-        # Dice with smoothing (more stable than IoU)
-        dice = (2.0 * intersection + self.smooth) / (union + self.smooth)  # (batch_size,)
-        
-        # Dice loss (1 - mean Dice)
-        dice_loss = 1.0 - dice.mean()
-        
-        return dice_loss
+
+        dice = (2.0 * intersection + self.smooth) / (union + self.smooth)
+        return 1.0 - dice.mean()
     
     def _compute_ce_loss(
-        self, 
-        mask_logits: torch.Tensor, 
-        mask_labels: torch.Tensor, 
+        self,
+        mask_logits: torch.Tensor,
+        mask_labels: torch.Tensor,
         attention_mask: torch.Tensor
     ) -> torch.Tensor:
-        """Compute CrossEntropy loss for binary classification."""
-        batch_size, seq_len, _ = mask_logits.shape
-        
-        # Reshape for loss computation
-        mask_logits_flat = mask_logits.view(-1, 2)  # (batch_size * seq_len, 2)
-        mask_labels_flat = mask_labels.view(-1)     # (batch_size * seq_len,)
-        
-        # Apply attention mask
-        if attention_mask is not None:
-            attention_mask_flat = attention_mask.reshape(-1)  # (batch_size * seq_len,)
-            valid_indices = attention_mask_flat == 1
-            mask_logits_flat = mask_logits_flat[valid_indices]
-            mask_labels_flat = mask_labels_flat[valid_indices]
-        
-        ce_loss = F.cross_entropy(mask_logits_flat, mask_labels_flat)
-        
-        return ce_loss
+        """Compute loss for binary classification."""
+        if self.use_sigmoid_head:
+            # N*1: binary cross entropy with logits
+            logits_flat = mask_logits.squeeze(-1).reshape(-1)  # (batch_size * seq_len,)
+            labels_flat = mask_labels.float().reshape(-1)       # (batch_size * seq_len,)
+
+            if attention_mask is not None:
+                valid = attention_mask.reshape(-1) == 1
+                logits_flat = logits_flat[valid]
+                labels_flat = labels_flat[valid]
+
+            return F.binary_cross_entropy_with_logits(logits_flat, labels_flat)
+        else:
+            # N*2: cross entropy
+            batch_size, seq_len, _ = mask_logits.shape
+            mask_logits_flat = mask_logits.view(-1, 2)
+            mask_labels_flat = mask_labels.view(-1)
+
+            if attention_mask is not None:
+                valid = attention_mask.reshape(-1) == 1
+                mask_logits_flat = mask_logits_flat[valid]
+                mask_labels_flat = mask_labels_flat[valid]
+
+            return F.cross_entropy(mask_logits_flat, mask_labels_flat)
     
     def predict(
         self,

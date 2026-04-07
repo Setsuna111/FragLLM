@@ -143,13 +143,14 @@ class PositionDecoder(nn.Module):
     """
     
     def __init__(
-        self, 
+        self,
         hidden_size: int,
         num_attention_heads: int = 8,
         num_layers: int = 2,
         intermediate_size: int = 512,
         dropout_rate: float = 0.1,
-        num_self_attention_heads: int = None  # New parameter for self-attention heads
+        num_self_attention_heads: int = None,  # New parameter for self-attention heads
+        use_sigmoid_head: bool = False  # If True, output N*1 logit instead of N*2
     ):
         super().__init__()
         
@@ -195,14 +196,25 @@ class PositionDecoder(nn.Module):
             nn.LayerNorm(hidden_size) for _ in range(num_layers)
         ])
         
-        # Binary mask prediction head
-        self.mask_head = nn.Sequential(
-            nn.Linear(hidden_size, intermediate_size),
-            nn.ReLU(),
-            nn.Dropout(dropout_rate),
-            nn.Linear(intermediate_size, 2)  # 2 for background/foreground probabilities
-        )
-        
+        self.use_sigmoid_head = use_sigmoid_head
+
+        if use_sigmoid_head:
+            # New: single logit head, output N*1, use sigmoid to get probability
+            self.mask_head = nn.Sequential(
+                nn.Linear(hidden_size, intermediate_size),
+                nn.ReLU(),
+                nn.Dropout(dropout_rate),
+                nn.Linear(intermediate_size, 1)  # 1 logit per residue
+            )
+        else:
+            # Default: N*2 head for background/foreground classification
+            self.mask_head = nn.Sequential(
+                nn.Linear(hidden_size, intermediate_size),
+                nn.ReLU(),
+                nn.Dropout(dropout_rate),
+                nn.Linear(intermediate_size, 2)
+            )
+
         # Initialize weights
         self._init_weights()
     
@@ -222,7 +234,7 @@ class PositionDecoder(nn.Module):
         protein_embeddings: torch.Tensor,    # (batch_size, seq_len, hidden_size)
         prompt_embeddings: torch.Tensor,     # (batch_size, 1, hidden_size)
         protein_attention_mask: torch.Tensor # (batch_size, seq_len)
-    ) -> torch.Tensor:  # (batch_size, seq_len, 2)
+    ) -> torch.Tensor:  # (batch_size, seq_len, 2) or (batch_size, seq_len, 1) if use_sigmoid_head
         """
         Forward pass of position decoder.
         
@@ -262,13 +274,13 @@ class PositionDecoder(nn.Module):
             hidden_states = self.layer_norms_ff[i](residual + ff_output)
         
         # Predict binary mask
-        mask_logits = self.mask_head(hidden_states)  # (batch_size, seq_len, 2)
-        
-        # Apply attention mask to logits
+        mask_logits = self.mask_head(hidden_states)  # (batch_size, seq_len, 2) or (batch_size, seq_len, 1)
+
+        # Apply attention mask to logits (mask padding positions)
         if protein_attention_mask is not None:
             mask = protein_attention_mask.unsqueeze(-1)  # (batch_size, seq_len, 1)
             mask_logits = mask_logits.masked_fill(mask == 0, -1e9)
-        
+
         return mask_logits
     
     def predict_mask(
