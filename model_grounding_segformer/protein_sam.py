@@ -9,9 +9,14 @@ import torch.nn.functional as F
 from typing import Dict, Optional, Tuple, Any, List
 import os
 
-from .protein_encoder import ProteinEncoder
-from .prompt_encoder import PromptEncoder
-from .position_decoder import PositionDecoder
+try:
+    from .protein_encoder import ProteinEncoder
+    from .prompt_encoder import PromptEncoder
+    from .position_decoder import PositionDecoder
+except ImportError:
+    from protein_encoder import ProteinEncoder
+    from prompt_encoder import PromptEncoder
+    from position_decoder import PositionDecoder
 
 
 class ProteinSAM(nn.Module):
@@ -271,7 +276,6 @@ class ProteinSAM(nn.Module):
             ce_loss = self._compute_ce_loss(mask_logits, residue_labels, protein_attention_mask)
             
             # Combine losses
-            # total_loss = 0.5 * dice_loss + ce_loss  # Balanced weighting for stability
             total_loss = 0.5 * dice_loss + 0.5 * ce_loss  # Balanced weighting for stability
             # total_loss = 0.5 * dice_loss
             # total_loss = 1.0 * dice_loss + 0.5 * ce_loss 
@@ -386,7 +390,8 @@ class ProteinSAM(nn.Module):
                 logits_flat = logits_flat[valid]
                 labels_flat = labels_flat[valid]
 
-            return F.binary_cross_entropy_with_logits(logits_flat, labels_flat)
+            # return F.binary_cross_entropy_with_logits(logits_flat, labels_flat)
+            return F.binary_cross_entropy_with_logits(logits_flat, labels_flat, pos_weight=torch.tensor(3.0).to(logits_flat.device))  # Adjust pos_weight for class imbalance
         else:
             # N*2: cross entropy
             batch_size, seq_len, _ = mask_logits.shape

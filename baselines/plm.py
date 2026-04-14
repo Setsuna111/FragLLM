@@ -25,7 +25,7 @@ def load_venusx_dataset(dataset_name, split):
         data = json.load(f)
     
     return data
-
+    
 def extract_fragments_with_labels(data):
     """Extract fragment sequences with their interpro_id labels"""
     fragments = []
@@ -288,7 +288,7 @@ if __name__ == "__main__":
     parser.add_argument("--dataset", choices=["Act", "BindI", "Dom", "Evo", "Motif"], required=True,
                        help="VenusX dataset to analyze")
     parser.add_argument("--model_path", type=str, 
-                       default="/home/lfj/projects_dir/pretrained_model/models--facebook--esm2_t33_650M_UR50D/",
+                       default="/home/dataset-locall/projects_dir/pretrained_model/models--facebook--esm2_t33_650M_UR50D/",
                        help="Path to protein language model (ESM2, ProtBERT, etc.)")
     parser.add_argument("--batch_size", type=int, default=16, 
                        help="Batch size for encoding sequences")

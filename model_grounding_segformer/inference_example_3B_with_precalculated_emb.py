@@ -8,7 +8,7 @@ This script supports:
 """
 
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "7"
+os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 import torch
 from protein_sam import ProteinSAM
 from dataset import get_datasets_and_collator, get_datasets_and_collator_with_esm_cache
@@ -194,6 +194,7 @@ def run_dataset_inference(
             batch_size = outputs["mask_predictions"].shape[0]
 
             # Convert masks to start/end positions for comparison
+            # 这里实际上和outputs中的一部分重复了，但结果一致
             pred_starts = []
             pred_ends = []
             for b in range(batch_size):
@@ -234,7 +235,7 @@ def run_dataset_inference(
 def main():
     parser = argparse.ArgumentParser(description="ProteinSAM Dataset Inference")
 
-    parser.add_argument("--checkpoint_path", type=str, default="./checkpoints_grounding_3B/best_model.pt",
+    parser.add_argument("--checkpoint_path", type=str, default="./checkpoints_grounding_3B_sigmoid_head/best_model.pt",
                        help="Path to trained model checkpoint")
     parser.add_argument("--params_file", type=str, default=None,
                        help="Path to model hyperparameters JSON file. "
@@ -242,7 +243,7 @@ def main():
                             "in the checkpoint directory")
     parser.add_argument("--data_root", type=str, default="../data",
                        help="Root directory for datasets")
-    parser.add_argument("--data_name", type=str, default='VenusX_BindI',
+    parser.add_argument("--data_name", type=str, default='VenusX_Act',
                        help="Dataset name(s). Single: 'VenusX_Dom' or Multiple: 'VenusX_Dom||VenusX_Act||VenusX_BindI'")
     parser.add_argument("--device", type=str, default="cuda",
                        help="Device to use for inference")
@@ -250,7 +251,7 @@ def main():
                        help="Inference batch size")
     parser.add_argument("--output_file", type=str, default=None,
                        help="Output file for predictions. If not provided, will save to checkpoint directory with name 'inference_results.json'")
-    parser.add_argument("--esm_embeddings_path", type=str, default="/data/lfj/esm_embeddings_3B.pt",
+    parser.add_argument("--esm_embeddings_path", type=str, default="./esm_embeddings_3B.pt",
                        help="Override ESM embeddings path from model params. Only used if model uses ESM cache.")
 
     args = parser.parse_args()
@@ -276,12 +277,8 @@ def main():
     llama_model_path = model_params.get("llama_model_path")
     use_category_cache = model_params.get("use_category_cache", True)
     use_esm_cache = True
-    esm_embeddings_path = "/data/lfj/esm_embeddings_3B.pt"
-
-    # Allow command-line override of ESM embeddings path
-    if args.esm_embeddings_path is not None:
-        esm_embeddings_path = args.esm_embeddings_path
-        print(f"   Overriding ESM embeddings path with: {esm_embeddings_path}")
+    esm_embeddings_path = args.esm_embeddings_path
+    print(f"   Using ESM embeddings path with: {esm_embeddings_path}")
 
     print(f"\n1. Loading datasets: {args.data_name}")
     print(f"   Using ESM cache: {use_esm_cache}")

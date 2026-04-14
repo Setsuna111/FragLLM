@@ -7,10 +7,9 @@ This script supports:
 2. TensorBoard logging for loss and metrics tracking
 3. External ESM embeddings without BOS/EOS tokens
 """
-
 import argparse
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "7"
+os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 import random
 import numpy as np
 import torch
@@ -361,10 +360,10 @@ def main():
 
     # Model arguments
     parser.add_argument("--esm_model_path", type=str,
-                       default="/home/lfj/projects_dir/pretrained_model/esm2_t36_3B_UR50D",
+                       default="/home/dataset-local/projects_dir/pretrained_model/esm2_t36_3B_UR50D",
                        help="Path to ESM model")
     parser.add_argument("--llama_model_path", type=str,
-                       default="/home/lfj/projects_dir/pretrained_model/Llama-3.1-8B-Instruct",
+                       default="/home/dataset-local/projects_dir/pretrained_model/Llama-3.1-8B-Instruct",
                        help="Path to Llama model")
     parser.add_argument("--output_llama_layer", type=int, default=16,
                        help="Which Llama layer to use for text encoding")
@@ -387,7 +386,7 @@ def main():
     # ESM embeddings cache arguments
     parser.add_argument("--use_esm_cache", default=True,
                        help="Use pre-computed ESM embeddings cache (saves GPU memory and computation)")
-    parser.add_argument("--esm_embeddings_path", type=str, default="/data/lfj/esm_embeddings_3B.pt",
+    parser.add_argument("--esm_embeddings_path", type=str, default="./esm_embeddings_3B.pt",
                        help="Path to pre-computed ESM embeddings (only used when --use_esm_cache is set)")
 
     # Training arguments
@@ -397,7 +396,7 @@ def main():
                        help="Evaluation batch size")
     parser.add_argument("--learning_rate", type=float, default=5e-5,
                        help="Learning rate")
-    parser.add_argument("--num_epochs", type=int, default=20,
+    parser.add_argument("--num_epochs", type=int, default=50,
                        help="Number of training epochs")
     parser.add_argument("--warmup_steps", type=int, default=500,
                        help="Number of warmup steps")
@@ -429,7 +428,7 @@ def main():
                        help="Standard deviation for position noise")
 
     # Other arguments
-    parser.add_argument("--output_dir", type=str, default="./checkpoints_grounding_3B",
+    parser.add_argument("--output_dir", type=str, default="./checkpoints_grounding_3B_sigmoid_head_3_ce_positive",
                        help="Output directory for model checkpoints")
     parser.add_argument("--log_dir", type=str, default="./logs",
                        help="Directory for logs")

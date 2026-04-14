@@ -154,8 +154,10 @@ class ProteinLlamaForCausalLM(LlamaForCausalLM, ProteinMetaForCausalLM):
                             external_esm_embeddings=esm_embeddings,
                             residue_labels=start_end_labels
                         )
-
-                        print(f"Token {token_idx}: Start Label = {start_labels.item()}, End Label = {end_labels.item()}, SAM Outputs = {sam_outputs['start_predictions'].item()}, {sam_outputs['end_predictions'].item()}")
+                        try:
+                            print(f"Token {token_idx}: Start Label = {start_labels.item()}, End Label = {end_labels.item()}, SAM Outputs = {sam_outputs['start_predictions'].item()}, {sam_outputs['end_predictions'].item()}")
+                        except:
+                            print(f"Token {token_idx}: Start Label = {start_labels}, End Label = {end_labels}, SAM Outputs = {sam_outputs['start_predictions']}, {sam_outputs['end_predictions']}")
                     
                         sample_outputs.append(sam_outputs)
                     
