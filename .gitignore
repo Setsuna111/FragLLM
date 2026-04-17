@@ -1,4 +1,5 @@
 data/
+data_*/
 checkpoints*/
 tensorboard_logs/
 .vscode/

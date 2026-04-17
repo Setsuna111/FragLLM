@@ -9,7 +9,7 @@ import argparse
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, DataLoader
 
 from transformers import AutoModel, AutoTokenizer, T5EncoderModel, T5Tokenizer
 from tqdm import tqdm
@@ -19,19 +19,21 @@ warnings.filterwarnings('ignore')
 
 # ─── Data Loading ────────────────────────────────────────────────────────────
 
-def load_venusx_dataset(dataset_name, split):
-    path = os.path.join(project_root, "data", f"VenusX_{dataset_name}", f"{split}.json")
+def load_venusx_dataset(dataset_name, split, data_dir=None):
+    if data_dir is None:
+        data_dir = os.path.join(project_root, "data")
+    path = os.path.join(data_dir, f"VenusX_{dataset_name}", f"{split}.json")
     if not os.path.exists(path):
         raise FileNotFoundError(f"Dataset not found: {path}")
     with open(path) as f:
         return json.load(f)
 
 
-def load_combined_data(dataset_names, split):
+def load_combined_data(dataset_names, split, data_dir=None):
     """Load and concatenate multiple VenusX datasets."""
     combined = []
     for name in dataset_names:
-        combined.extend(load_venusx_dataset(name, split))
+        combined.extend(load_venusx_dataset(name, split, data_dir=data_dir))
     return combined
 
 
@@ -90,7 +92,7 @@ def encode_sequence(plm, tokenizer, sequence, device, is_t5):
     return valid  # (L, H)
 
 
-def precompute_embeddings(model_path, dataset_names, splits, output_dir, device, max_seq_len=1024):
+def precompute_embeddings(model_path, dataset_names, splits, output_dir, device, max_seq_len=1024, data_dir=None):
     """
     Precompute embeddings for all proteins and save as individual .pt files.
 
@@ -110,7 +112,7 @@ def precompute_embeddings(model_path, dataset_names, splits, output_dir, device,
     # Process each split
     for split in splits:
         print(f"\n=== Processing {split} split ===")
-        data = load_combined_data(dataset_names, split)
+        data = load_combined_data(dataset_names, split, data_dir=data_dir)
 
         split_dir = os.path.join(output_dir, split)
         os.makedirs(split_dir, exist_ok=True)
@@ -156,8 +158,8 @@ class ProteinDatasetPrecomputed(Dataset):
                 if cls_idx is None:
                     continue
                 for frag in fg['frags']:
-                    s = frag['start_position'] - 1
-                    e = min(frag['end_position'], max_seq_len)
+                    s = frag['start_position']
+                    e = min(frag['end_position'] + 1, max_seq_len)
                     if s < L:
                         sparse_labels.append((cls_idx, s, e))
 
@@ -187,6 +189,25 @@ class ProteinDatasetPrecomputed(Dataset):
         ).float()  # (L, C)
 
         return uid, emb, label
+
+
+def collate_fn(batch):
+    """Pad variable-length sequences to the longest in the batch."""
+    uids, embs, labels = zip(*batch)
+    lengths = [e.shape[0] for e in embs]
+    max_len = max(lengths)
+    H = embs[0].shape[1]
+    C = labels[0].shape[1]
+    B = len(embs)
+
+    padded_embs = torch.zeros(B, max_len, H)
+    padded_labels = torch.zeros(B, max_len, C)
+    for i, (e, l) in enumerate(zip(embs, labels)):
+        L = e.shape[0]
+        padded_embs[i, :L] = e
+        padded_labels[i, :L] = l
+
+    return list(uids), padded_embs, padded_labels, torch.tensor(lengths, dtype=torch.long)
 
 
 # ─── ProtENN2-style Residual CNN ─────────────────────────────────────────────
@@ -301,25 +322,25 @@ class ProtENN2StyleClassifier(nn.Module):
     def forward(self, x):
         """
         Args:
-            x: (L, hidden_dim) - per-residue embeddings
+            x: (B, L, hidden_dim) - batched per-residue embeddings
         Returns:
-            (L, num_classes) - per-residue logits
+            (B, L, num_classes) - per-residue logits
         """
-        # Add batch dimension and transpose: (L, H) → (1, H, L)
-        x = x.unsqueeze(0).transpose(1, 2)
+        # (B, L, H) → (B, H, L)
+        x = x.transpose(1, 2)
 
         # Initial projection
-        x = self.input_proj(x)  # (1, num_filters, L)
+        x = self.input_proj(x)  # (B, num_filters, L)
 
         # Residual blocks
         for block in self.residual_blocks:
             x = block(x)
 
         # Output projection
-        x = self.output_proj(x)  # (1, num_classes, L)
+        x = self.output_proj(x)  # (B, num_classes, L)
 
-        # Transpose back: (1, num_classes, L) → (L, num_classes)
-        x = x.squeeze(0).transpose(0, 1)
+        # (B, num_classes, L) → (B, L, num_classes)
+        x = x.transpose(1, 2)
 
         return x
 
@@ -333,57 +354,70 @@ def set_seed(seed):
     torch.cuda.manual_seed_all(seed)
 
 
-def train_single_model(classifier, dataset, device, epochs, lr, batch_proteins,
-                       eval_dataset=None, threshold=0.5, seed=42):
+def train_single_model(classifier, dataset, device, epochs, lr, batch_size,
+                       num_workers=4, eval_dataset=None, threshold=0.5, seed=42):
     """Train a single model with given seed."""
     set_seed(seed)
+
+    loader = DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=num_workers,
+        collate_fn=collate_fn,
+        pin_memory=(device.type == 'cuda'),
+    )
+    eval_loader = DataLoader(
+        eval_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        collate_fn=collate_fn,
+        pin_memory=(device.type == 'cuda'),
+    ) if eval_dataset is not None else None
 
     optimizer = torch.optim.Adam(classifier.parameters(), lr=lr)
     criterion = nn.BCEWithLogitsLoss()
     classifier.train()
 
-    indices = list(range(len(dataset)))
     best_iou = 0.0
 
     for epoch in range(epochs):
-        np.random.shuffle(indices)
         total_loss = 0.0
-        steps = 0
+        total_tokens = 0
 
-        optimizer.zero_grad()
-        pbar = tqdm(indices, desc=f"[Seed {seed}] Epoch {epoch+1}/{epochs}")
-        for idx in pbar:
-            _, emb, label = dataset[idx]
-            emb = emb.to(device)      # (L, H)
-            label = label.to(device)  # (L, C)
+        pbar = tqdm(loader, desc=f"[Seed {seed}] Epoch {epoch+1}/{epochs}")
+        for _, embs, labels, lengths in pbar:
+            embs = embs.to(device)      # (B, L_max, H)
+            labels = labels.to(device)  # (B, L_max, C)
+            lengths = lengths.to(device)
 
-            logits = classifier(emb)  # (L, C)
-            loss = criterion(logits, label) / batch_proteins
-            loss.backward()
-            total_loss += loss.item() * batch_proteins
-            steps += 1
+            logits = classifier(embs)   # (B, L_max, C)
 
-            pbar.set_postfix(loss=f"{total_loss / steps:.6f}")
+            # Build mask to exclude padding from loss
+            L_max = embs.shape[1]
+            mask = torch.arange(L_max, device=device).unsqueeze(0) < lengths.unsqueeze(1)  # (B, L_max)
 
-            if steps % batch_proteins == 0:
-                optimizer.step()
-                optimizer.zero_grad()
+            loss = criterion(logits[mask], labels[mask])
 
-        if steps % batch_proteins != 0:
-            optimizer.step()
             optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
 
-        avg_loss = total_loss / len(dataset)
+            n_tokens = mask.sum().item()
+            total_loss += loss.item() * n_tokens
+            total_tokens += n_tokens
+            pbar.set_postfix(loss=f"{total_loss / total_tokens:.6f}")
+
+        avg_loss = total_loss / total_tokens
         print(f"  [Seed {seed}] Epoch {epoch+1} avg loss: {avg_loss:.6f}")
 
-        if eval_dataset is not None:
+        if eval_loader is not None:
             print(f"  [Seed {seed}] Evaluating on test set...")
-            _, mean_iou = evaluate(classifier, eval_dataset, device, threshold)
+            _, mean_iou = evaluate(classifier, eval_loader, device, threshold)
             print(f"  [Seed {seed}] Test Mean IoU: {mean_iou:.6f}")
-
             if mean_iou > best_iou:
                 best_iou = mean_iou
-
             classifier.train()
 
     return best_iou
@@ -435,7 +469,8 @@ def train_ensemble(hidden_dim, num_classes, train_dataset, test_dataset, device,
             device=device,
             epochs=args.epochs,
             lr=args.lr,
-            batch_proteins=args.batch_proteins,
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
             eval_dataset=test_dataset,
             threshold=args.threshold,
             seed=seed
@@ -474,22 +509,23 @@ def compute_iou(pred_bin, label_bin):
 
 
 @torch.no_grad()
-def evaluate(classifier, dataset, device, threshold=0.5):
-    """Evaluate a single model."""
+def evaluate(classifier, loader, device, threshold=0.5):
+    """Evaluate a single model using a DataLoader."""
     classifier.eval()
     all_iou = []
     results = []
 
-    for idx in tqdm(range(len(dataset)), desc="Evaluating"):
-        uid, emb, label = dataset[idx]
-        emb = emb.to(device)
-        logits = classifier(emb).cpu().numpy()
-        pred_bin = (logits > threshold).astype(np.int32)
-        label_bin = label.numpy().astype(np.int32)
+    for uids, embs, labels, lengths in tqdm(loader, desc="Evaluating"):
+        embs = embs.to(device)   # (B, L_max, H)
+        logits = classifier(embs).cpu()  # (B, L_max, C)
 
-        iou = compute_iou(pred_bin, label_bin)
-        all_iou.append(iou)
-        results.append({'uid': uid, 'iou': iou})
+        for i, (uid, length) in enumerate(zip(uids, lengths)):
+            L = length.item()
+            pred_bin = (logits[i, :L].numpy() > threshold).astype(np.int32)
+            label_bin = labels[i, :L].numpy().astype(np.int32)
+            iou = compute_iou(pred_bin, label_bin)
+            all_iou.append(iou)
+            results.append({'uid': uid, 'iou': iou})
 
     mean_iou = float(np.mean(all_iou))
     print(f"Mean IoU: {mean_iou:.6f}")
@@ -497,34 +533,31 @@ def evaluate(classifier, dataset, device, threshold=0.5):
 
 
 @torch.no_grad()
-def evaluate_ensemble(models, dataset, device, threshold=0.5):
-    """Evaluate ensemble by averaging predictions."""
+def evaluate_ensemble(models, loader, device, threshold=0.5):
+    """Evaluate ensemble by averaging logits across models."""
     for model in models:
         model.eval()
 
     all_iou = []
     results = []
 
-    for idx in tqdm(range(len(dataset)), desc="Evaluating Ensemble"):
-        uid, emb, label = dataset[idx]
-        emb = emb.to(device)
+    for uids, embs, labels, lengths in tqdm(loader, desc="Evaluating Ensemble"):
+        embs = embs.to(device)  # (B, L_max, H)
 
-        # Average predictions from all models
+        # Sum logits from all models
         logits_sum = None
         for model in models:
-            logits = model(emb)
-            if logits_sum is None:
-                logits_sum = logits
-            else:
-                logits_sum += logits
+            logits = model(embs)
+            logits_sum = logits if logits_sum is None else logits_sum + logits
+        logits_avg = (logits_sum / len(models)).cpu()  # (B, L_max, C)
 
-        logits_avg = (logits_sum / len(models)).cpu().numpy()
-        pred_bin = (logits_avg > threshold).astype(np.int32)
-        label_bin = label.numpy().astype(np.int32)
-
-        iou = compute_iou(pred_bin, label_bin)
-        all_iou.append(iou)
-        results.append({'uid': uid, 'iou': iou})
+        for i, (uid, length) in enumerate(zip(uids, lengths)):
+            L = length.item()
+            pred_bin = (logits_avg[i, :L].numpy() > threshold).astype(np.int32)
+            label_bin = labels[i, :L].numpy().astype(np.int32)
+            iou = compute_iou(pred_bin, label_bin)
+            all_iou.append(iou)
+            results.append({'uid': uid, 'iou': iou})
 
     mean_iou = float(np.mean(all_iou))
     print(f"Ensemble Mean IoU: {mean_iou:.6f}")
@@ -535,6 +568,7 @@ def evaluate_ensemble(models, dataset, device, threshold=0.5):
 
 def main(args):
     dataset_names = [d.strip() for d in args.datasets.split(',')]
+    data_dir = args.data_dir
     model_name = args.model_path.rstrip('/').split('/')[-1]
 
     # Setup output directory
@@ -546,15 +580,17 @@ def main(args):
     )
     os.makedirs(out_dir, exist_ok=True)
 
-    device = torch.device('cuda:0' if not args.cpu and torch.cuda.is_available() else 'cpu')
+    device = torch.device(args.device if torch.cuda.is_available() else 'cpu')
     print(f"Datasets: {dataset_names}  |  Device: {device}")
     print(f"Ensemble size: {args.num_ensemble}")
 
     # Setup embedding directory
+    data_dir_name = os.path.basename(data_dir.rstrip('/'))
     emb_dir = os.path.join(
         project_root,
         'baselines',
         'plm_embeddings',
+        data_dir_name,
         model_name,
         '+'.join(dataset_names)
     )
@@ -568,14 +604,15 @@ def main(args):
             splits=['train', 'test'],
             output_dir=emb_dir,
             device=device,
-            max_seq_len=args.max_seq_len
+            max_seq_len=args.max_seq_len,
+            data_dir=data_dir
         )
     else:
         print(f"\nUsing precomputed embeddings from {emb_dir}")
 
     # Load data for label mapping
-    train_data = load_combined_data(dataset_names, 'train')
-    test_data = load_combined_data(dataset_names, 'test')
+    train_data = load_combined_data(dataset_names, 'train', data_dir=data_dir)
+    test_data = load_combined_data(dataset_names, 'test', data_dir=data_dir)
 
     label_map = build_label_map(train_data)
     num_classes = len(label_map)
@@ -620,7 +657,15 @@ def main(args):
 
     # Evaluate ensemble
     print("\n=== Evaluating Ensemble ===")
-    results, mean_iou = evaluate_ensemble(models, test_dataset, device, args.threshold)
+    eval_loader = DataLoader(
+        test_dataset,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+        collate_fn=collate_fn,
+        pin_memory=(device.type == 'cuda'),
+    )
+    results, mean_iou = evaluate_ensemble(models, eval_loader, device, args.threshold)
 
     # Save results
     import pandas as pd
@@ -662,12 +707,14 @@ if __name__ == '__main__':
     # Data arguments
     parser.add_argument('--datasets', type=str, default="Act,BindI,Dom,Evo,Motif",
                         help='Comma-separated dataset names')
+    parser.add_argument('--data_dir', type=str, default="/home/dataset-local/projects_dir/FragLLM/data_70",
+                        help='data_dir')
     parser.add_argument('--model_path', type=str,
                         default='/home/dataset-local/projects_dir/pretrained_model/models--facebook--esm2_t33_650M_UR50D/',
                         help='Path to PLM')
     parser.add_argument('--max_seq_len', type=int, default=1024)
-    parser.add_argument('--precompute_embeddings', default=True,
-                        help='Force recompute embeddings even if they exist')
+    parser.add_argument('--precompute_embeddings', default=False,
+                        help='Force recompute embeddings even if they exist -- 只有在编码一半意外终止时才True')
 
     # Model architecture arguments (ProtENN2-inspired)
     parser.add_argument('--num_filters', type=int, default=512,
@@ -686,14 +733,17 @@ if __name__ == '__main__':
                         help='Dropout rate')
 
     # Training arguments
-    parser.add_argument('--epochs', type=int, default=30)
+    parser.add_argument('--epochs', type=int, default=20)
     parser.add_argument('--lr', type=float, default=1e-4)
-    parser.add_argument('--batch_proteins', type=int, default=32,
-                        help='Gradient accumulation over N proteins')
+    parser.add_argument('--batch_size', type=int, default=16,
+                        help='Number of proteins per batch')
+    parser.add_argument('--num_workers', type=int, default=16,
+                        help='DataLoader worker processes')
     parser.add_argument('--threshold', type=float, default=0.5)
+    parser.add_argument('--device', type=str, default='cuda:3')
 
     # Ensemble arguments
-    parser.add_argument('--num_ensemble', type=int, default=10,
+    parser.add_argument('--num_ensemble', type=int, default=1,
                         help='Number of models in ensemble')
     parser.add_argument('--base_seed', type=int, default=42,
                         help='Base random seed (each model uses base_seed + model_idx)')

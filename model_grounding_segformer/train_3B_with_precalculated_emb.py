@@ -9,7 +9,7 @@ This script supports:
 """
 import argparse
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "2"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 import random
 import numpy as np
 import torch
@@ -377,17 +377,16 @@ def main():
                        help="Maximum protein sequence length")
     parser.add_argument("--max_text_length", type=int, default=128,
                        help="Maximum text length")
-    parser.add_argument("--category_embeddings_path", type=str,
-                       default="./category_embeddings.pt",
-                       help="Path to pre-computed category embeddings")
     parser.add_argument("--use_category_cache", default=True,
                        help="Use pre-computed category embeddings cache")
-
+    parser.add_argument("--category_embeddings_base_dir", type=str, default=".",
+                       help="category_embeddings/<data>/category_embeddings.pt")
+    
     # ESM embeddings cache arguments
     parser.add_argument("--use_esm_cache", default=True,
                        help="Use pre-computed ESM embeddings cache (saves GPU memory and computation)")
-    parser.add_argument("--esm_embeddings_path", type=str, default="./esm_embeddings_3B.pt",
-                       help="Path to pre-computed ESM embeddings (only used when --use_esm_cache is set)")
+    parser.add_argument("--esm_embeddings_base_dir", type=str, default=".",
+                       help="Base directory under which esm_embeddings/<model>/<data>/ was created by preprocess_esm_3B.py")
 
     # Training arguments
     parser.add_argument("--batch_size", type=int, default=32,
@@ -428,7 +427,7 @@ def main():
                        help="Standard deviation for position noise")
 
     # Other arguments
-    parser.add_argument("--output_dir", type=str, default="./checkpoints_grounding_3B_sigmoid_head_3_ce_positive",
+    parser.add_argument("--output_dir", type=str, default="./checkpoints_grounding_3B_cluster_70",
                        help="Output directory for model checkpoints")
     parser.add_argument("--log_dir", type=str, default="./logs",
                        help="Directory for logs")
@@ -466,14 +465,20 @@ def main():
     logger.info("Loading datasets...")
 
     if args.use_esm_cache:
+        # Auto-derive embeddings directory from model and data names
+        esm_model_name = os.path.basename(os.path.normpath(args.esm_model_path))
+        data_root_name = os.path.basename(os.path.normpath(args.data_root))
+        esm_embeddings_dir = os.path.join(
+            args.esm_embeddings_base_dir, "esm_embeddings", esm_model_name, data_root_name
+        )
         # Use pre-computed ESM embeddings
-        logger.info(f"Using pre-computed ESM embeddings from {args.esm_embeddings_path}")
+        logger.info(f"Using pre-computed ESM embeddings from {esm_embeddings_dir}")
         logger.info("Note: ESM embeddings do NOT include BOS/EOS tokens")
         datasets, collator = get_datasets_and_collator_with_esm_cache(
             root_dir=args.data_root,
             data_name=args.data_name,
             esm_model_path=args.esm_model_path,
-            esm_embeddings_path=args.esm_embeddings_path,
+            esm_embeddings_dir=esm_embeddings_dir,
             llama_model_path=args.llama_model_path if not args.use_category_cache else None,
             max_sequence_length=args.max_sequence_length,
             max_text_length=args.max_text_length,
@@ -496,9 +501,9 @@ def main():
     )
 
     eval_loader = None
-    if "valid" in datasets:
+    if "test" in datasets:
         eval_loader = DataLoader(
-            datasets["valid"],
+            datasets["test"],
             batch_size=args.eval_batch_size,
             shuffle=False,
             collate_fn=collator,
@@ -508,6 +513,8 @@ def main():
 
     # Initialize model
     logger.info("Initializing model...")
+
+    category_embeddings_path = os.path.join(args.category_embeddings_base_dir, "category_embeddings", os.path.basename(os.path.normpath(args.data_root)), "category_embeddings.pt")
 
     # Save ProteinSAM initialization parameters to JSON file
     protein_sam_init_params = {
@@ -522,7 +529,7 @@ def main():
         "dropout_rate": args.dropout_rate,
         "device": args.device,
         "use_category_cache": args.use_category_cache,
-        "category_embeddings_path": args.category_embeddings_path if args.use_category_cache else None,
+        "category_embeddings_path": category_embeddings_path if args.use_category_cache else None,
         "use_sigmoid_head": args.use_sigmoid_head
     }
 
@@ -544,7 +551,7 @@ def main():
         dropout_rate=args.dropout_rate,
         device=args.device,
         use_category_cache=args.use_category_cache,
-        category_embeddings_path=args.category_embeddings_path if args.use_category_cache else None,
+        category_embeddings_path=category_embeddings_path if args.use_category_cache else None,
         use_external_esm=args.use_esm_cache,  # Skip loading ESM model if using cache
         use_sigmoid_head=args.use_sigmoid_head
     )

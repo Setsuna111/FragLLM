@@ -4,7 +4,7 @@ This script extracts all unique categories from datasets and pre-computes their 
 """
 
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "4"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 import json
 import torch
 from transformers import LlamaModel, LlamaTokenizer, AutoTokenizer
@@ -83,7 +83,7 @@ def encode_categories_with_llama(
     tokenizer = AutoTokenizer.from_pretrained(llama_model_path)
 
     # 覆盖prot2text中的llama权重
-    load_pro2text_checkpoint_dir = "/home/lfj/projects_dir/pretrained_model/Prot2Text-V2-11B-Instruct-hf/"
+    load_pro2text_checkpoint_dir = "/home/dataset-local/projects_dir/pretrained_model/Prot2Text-V2-11B-Instruct-hf/"
     from transformers import AutoModelForCausalLM
     pro2text_model = AutoModelForCausalLM.from_pretrained(load_pro2text_checkpoint_dir, trust_remote_code=True)
     pro2text_param_dict = pro2text_model.state_dict()
@@ -145,12 +145,12 @@ def encode_categories_with_llama(
 def main():
     parser = argparse.ArgumentParser(description="Preprocess categories for ProteinSAM")
     
-    parser.add_argument("--data_root", type=str, default="../data",
+    parser.add_argument("--data_root", type=str, default="../data_90",
                        help="Root directory for datasets")
     parser.add_argument("--data_name", type=str, default="VenusX_Dom||VenusX_Act||VenusX_BindI||VenusX_Motif||VenusX_Evo",
                        help="Alternative: single data_name string supporting multiple datasets with || separator")
     parser.add_argument("--llama_model_path", type=str,
-                       default="/home/lfj/projects_dir/pretrained_model/Llama-3.1-8B-Instruct/",
+                       default="/home/dataset-local/projects_dir/pretrained_model/Llama-3.1-8B-Instruct/",
                        help="Path to Llama model")
     parser.add_argument("--output_llama_layer", type=int, default=16,
                        help="Which Llama layer to use for embeddings")
@@ -158,11 +158,15 @@ def main():
                        help="Batch size for encoding")
     parser.add_argument("--device", type=str, default="cuda",
                        help="Device to use for encoding")
-    parser.add_argument("--output_path", type=str, default="./category_embeddings.pt",
-                       help="Output path for category embeddings")
-    
+    parser.add_argument("--output_base_dir", type=str, default=".",
+                       help="Base directory under which category_embeddings/<data>/ will be created")
+        
     args = parser.parse_args()
     
+    data_name = os.path.basename(os.path.normpath(args.data_root))
+    output_path = os.path.join(args.output_base_dir, "category_embeddings", data_name, "category_embeddings.pt")
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
     print("=== Category Preprocessing for ProteinSAM ===")
     print(f"Data root: {args.data_root}")
     print(f"Llama model: {args.llama_model_path}")
@@ -201,9 +205,9 @@ def main():
         "llama_model_path": args.llama_model_path,
         "output_llama_layer": args.output_llama_layer,
         "embedding_dim": list(category_embeddings.values())[0].shape[0]
-    }, args.output_path)
+    }, output_path)
     
-    print(f"Category embeddings saved to: {args.output_path}")
+    print(f"Category embeddings saved to: {output_path}")
     print(f"Embedding dimension: {list(category_embeddings.values())[0].shape[0]}")
     print("Preprocessing completed!")
 

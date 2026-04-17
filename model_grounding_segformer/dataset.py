@@ -151,9 +151,9 @@ class ProteinSAMDataset(data.Dataset):
             # if random.random() < self.random_position_prob:
             #     return random.randint(0, sequence_length - 1)
         else:
-            # During evaluation, with some probability, return null position (for multi-region task)
-            if random.random() < self.null_position_prob:
-                return None  # Multi-region task
+            # if random.random() < self.null_position_prob:
+                # return None  # Multi-region task
+            pass
 
         # Calculate center position with noise
         center_pos = (start_pos + end_pos) // 2
@@ -501,8 +501,9 @@ def get_datasets_and_collator(
 
 class ProteinSAMDatasetWithESMCache(ProteinSAMDataset):
     """
-    Dataset for ProteinSAM training with pre-computed ESM embeddings.
-    Extends ProteinSAMDataset to support loading ESM embeddings from cache.
+    Dataset for ProteinSAM training with pre-computed ESM embeddings (lazy loading).
+    Extends ProteinSAMDataset to support loading ESM embeddings on-demand from a directory
+    of per-uid .pt files, avoiding loading all embeddings into memory at once.
 
     Note: Pre-computed ESM embeddings should NOT include BOS/EOS tokens.
     The embeddings are stored as (seq_len, hidden_size) tensors where seq_len
@@ -514,7 +515,7 @@ class ProteinSAMDatasetWithESMCache(ProteinSAMDataset):
         root_dir: str,
         data_name: str,
         split: str,
-        esm_embeddings_cache: Dict[str, torch.Tensor],
+        esm_embeddings_dir: str,
         max_sequence_length: int = 1021,
         null_position_prob: float = 0.3,
         random_position_prob: float = 0.2,
@@ -522,7 +523,7 @@ class ProteinSAMDatasetWithESMCache(ProteinSAMDataset):
         filter_long_sequences: bool = True,
         **kwargs
     ):
-        self.esm_embeddings_cache = esm_embeddings_cache
+        self.esm_embeddings_dir = esm_embeddings_dir
         super().__init__(
             root_dir=root_dir,
             data_name=data_name,
@@ -535,21 +536,25 @@ class ProteinSAMDatasetWithESMCache(ProteinSAMDataset):
             **kwargs
         )
 
-        # Verify all UIDs have embeddings
+        # Verify all UIDs have embedding files
         missing_uids = set()
         for item in self.data_infos:
-            if item["uid"] not in self.esm_embeddings_cache:
-                missing_uids.add(item["uid"])
+            uid = item["uid"]
+            if not os.path.exists(os.path.join(esm_embeddings_dir, f"{uid}.pt")):
+                missing_uids.add(uid)
 
         if missing_uids:
-            print(f"Warning: {len(missing_uids)} UIDs missing from ESM cache in {split} split")
-            # Filter out samples without embeddings
-            self.data_infos = [item for item in self.data_infos if item["uid"] in self.esm_embeddings_cache]
+            print(f"Warning: {len(missing_uids)} UIDs missing from ESM cache dir in {split} split")
+            # Filter out samples without embedding files
+            self.data_infos = [
+                item for item in self.data_infos
+                if os.path.exists(os.path.join(esm_embeddings_dir, f"{item['uid']}.pt"))
+            ]
             print(f"Filtered to {len(self.data_infos)} samples with ESM embeddings")
 
     def __getitem__(self, idx: int) -> Dict[str, Any]:
         """
-        Get a single data sample with pre-computed ESM embedding.
+        Get a single data sample with pre-computed ESM embedding (loaded on demand).
 
         Returns:
             Dictionary containing processed data sample with ESM embedding
@@ -561,9 +566,10 @@ class ProteinSAMDatasetWithESMCache(ProteinSAMDataset):
         data_item = self.data_infos[idx]
         uid = data_item["uid"]
 
-        # Get pre-computed ESM embedding for this uid
+        # Lazy load: read only this uid's embedding file
         # The embedding is (full_seq_len, hidden_size) without BOS/EOS
-        full_embedding = self.esm_embeddings_cache[uid]  # (full_seq_len, hidden_size)
+        emb_path = os.path.join(self.esm_embeddings_dir, f"{uid}.pt")
+        full_embedding = torch.load(emb_path, map_location="cpu", weights_only=True)  # (full_seq_len, hidden_size)
 
         # Handle sequence truncation - need to slice embedding accordingly
         original_sequence = data_item["sequence"]
@@ -571,19 +577,16 @@ class ProteinSAMDatasetWithESMCache(ProteinSAMDataset):
 
         if len(processed_sequence) < len(original_sequence):
             # Sequence was truncated, find where processed_sequence starts in original
-            # This is more reliable than calculating offset from fragment positions
             truncate_offset = original_sequence.find(processed_sequence)
             if truncate_offset == -1:
-                # Fallback: should not happen, but use start position based calculation
+                # Fallback: use start position based calculation
                 truncate_offset = data_item["start_position"] - sample.get("start_position", 0)
                 truncate_offset = max(0, truncate_offset)
 
-            # Slice the embedding
             embedding = full_embedding[truncate_offset:truncate_offset + len(processed_sequence)]
         else:
             embedding = full_embedding[:len(processed_sequence)]
 
-        # Add embedding to sample
         sample["esm_embedding"] = embedding  # (seq_len, hidden_size)
         sample["uid"] = uid
 
@@ -606,7 +609,7 @@ class ProteinSAMCollatorWithESMCache:
         max_protein_length: int = 1024,
         max_text_length: int = 128,
         use_category_cache: bool = True,
-        esm_hidden_size: int = 2560  # ESM 3B hidden size
+        esm_hidden_size: int = 2560  # ESM 3B hidden size; inferred from batch if 0
     ):
         self.esm_tokenizer = esm_tokenizer
         self.llama_tokenizer = llama_tokenizer
@@ -641,10 +644,11 @@ class ProteinSAMCollatorWithESMCache:
         # Find max sequence length in this batch (without BOS/EOS)
         seq_lengths = [emb.shape[0] for emb in esm_embeddings]
         max_seq_len = max(seq_lengths)
+        hidden_size = esm_embeddings[0].shape[1] if self.esm_hidden_size == 0 else self.esm_hidden_size
 
         # Pad ESM embeddings to max length
         # Shape: (batch_size, max_seq_len, hidden_size)
-        padded_embeddings = torch.zeros(batch_size, max_seq_len, self.esm_hidden_size)
+        padded_embeddings = torch.zeros(batch_size, max_seq_len, hidden_size)
 
         # Create attention mask WITH BOS/EOS positions to match forward() expectation
         # Forward function will slice it with [:, 1:-1] to get actual sequence mask
@@ -657,9 +661,10 @@ class ProteinSAMCollatorWithESMCache:
             # Set BOS position (index 0) = 1
             attention_mask[i, 0] = 1
             # Set actual sequence positions (index 1 to seq_len) = 1
-            attention_mask[i, 1:seq_len + 1] = 1
+            attention_mask[i, 1:seq_len+1] = 1
             # Set EOS position (index seq_len + 1) = 1
             attention_mask[i, seq_len + 1] = 1
+            # 注意这里即使序列emb已经去掉了EOS和BOS，attention_mask还要再虚构上，这样主模型1：-1才对。。
 
         # Handle text tokenization (only if not using cache)
         text_input_ids = None
@@ -733,21 +738,22 @@ def get_datasets_and_collator_with_esm_cache(
     root_dir: str,
     data_name: str,
     esm_model_path: str,
-    esm_embeddings_path: str,
+    esm_embeddings_dir: str,
     llama_model_path: Optional[str] = None,
     max_sequence_length: int = 1021,
     max_text_length: int = 128,
     use_category_cache: bool = True,
     **dataset_kwargs
-) -> Tuple[Dict[str, ProteinSAMDatasetWithESMCache], ProteinSAMCollatorWithESMCache]:
+) -> Tuple[Dict[str, "ProteinSAMDatasetWithESMCache"], "ProteinSAMCollatorWithESMCache"]:
     """
     Create datasets and collator for ProteinSAM training with pre-computed ESM embeddings.
+    Embeddings are loaded lazily per-uid from individual .pt files in esm_embeddings_dir.
 
     Args:
         root_dir: Root directory containing data
         data_name: Dataset name (e.g., "VenusX_Dom")
         esm_model_path: Path to ESM tokenizer
-        esm_embeddings_path: Path to pre-computed ESM embeddings
+        esm_embeddings_dir: Directory containing per-uid .pt embedding files
         llama_model_path: Path to Llama tokenizer (optional if using cache)
         max_sequence_length: Maximum protein sequence length
         max_text_length: Maximum text length
@@ -757,12 +763,9 @@ def get_datasets_and_collator_with_esm_cache(
     Returns:
         Dictionary of datasets and data collator
     """
-    # Load ESM embeddings cache
-    print(f"Loading ESM embeddings from {esm_embeddings_path}...")
-    esm_cache = torch.load(esm_embeddings_path, map_location="cpu")
-    esm_embeddings_cache = esm_cache["sequence_embeddings"]
-    esm_hidden_size = esm_cache["embedding_dim"]
-    print(f"Loaded {len(esm_embeddings_cache)} ESM embeddings with dimension {esm_hidden_size}")
+    print(f"Using ESM embeddings directory: {esm_embeddings_dir}")
+    if not os.path.isdir(esm_embeddings_dir):
+        raise ValueError(f"ESM embeddings directory not found: {esm_embeddings_dir}")
 
     # Initialize tokenizers
     esm_tokenizer = EsmTokenizer.from_pretrained(esm_model_path)
@@ -775,24 +778,25 @@ def get_datasets_and_collator_with_esm_cache(
 
     # Create datasets
     datasets = {}
-    for split in ["train", "valid", "test"]:
+    # for split in ["train", "valid", "test"]:
+    for split in ["train", "test"]:
         datasets[split] = ProteinSAMDatasetWithESMCache(
             root_dir=root_dir,
             data_name=data_name,
             split=split,
-            esm_embeddings_cache=esm_embeddings_cache,
+            esm_embeddings_dir=esm_embeddings_dir,
             max_sequence_length=max_sequence_length,
             **dataset_kwargs
         )
 
-    # Create collator
+    # Create collator (hidden size inferred dynamically from embeddings)
     collator = ProteinSAMCollatorWithESMCache(
         esm_tokenizer=esm_tokenizer,
         llama_tokenizer=llama_tokenizer,
         max_protein_length=max_sequence_length,
         max_text_length=max_text_length,
         use_category_cache=use_category_cache,
-        esm_hidden_size=esm_hidden_size
+        esm_hidden_size=0  # 0 = infer from batch
     )
 
     return datasets, collator

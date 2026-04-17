@@ -1,13 +1,16 @@
 """
 Preprocess protein sequences using ESM2 3B model to generate embeddings cache.
 This script processes all unique protein sequences from datasets and pre-computes their ESM embeddings.
+Each protein sequence is saved as an individual .pt file named by its uid.
 
 Usage:
-    python preprocess_esm_3B.py --data_root ../data --output_path ./esm_embeddings_3B.pt
+    python preprocess_esm_3B.py --data_root ../data
+    # Output dir is auto-derived as: ./esm_embeddings/<esm_model_name>/<data_root_name>/
+    # e.g. ./esm_embeddings/esm2_t36_3B_UR50D/data/
 """
 
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "2"
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 import json
 import torch
 from transformers import EsmModel, EsmTokenizer
@@ -63,7 +66,8 @@ def get_all_sequences(data_root: str, data_names: List[str], max_sequence_length
     all_sequences = {}
 
     for data_name in data_names:
-        for split in ["train", "valid", "test"]:
+        # for split in ["train", "valid", "test"]:
+        for split in ["train", "test"]:
             data_path = os.path.join(data_root, data_name, f"{split}.json")
             sequences = extract_sequences_from_dataset(data_path, max_sequence_length)
 
@@ -86,33 +90,35 @@ def get_all_sequences(data_root: str, data_names: List[str], max_sequence_length
 def encode_sequences_with_esm(
     sequences: Dict[str, str],
     esm_model_path: str,
+    output_dir: str,
     batch_size: int = 4,
     max_sequence_length: int = 1021,
     device: str = "cuda"
-) -> Dict[str, torch.Tensor]:
+) -> int:
     """
-    Encode protein sequences using ESM2 3B model.
+    Encode protein sequences using ESM2 3B model and save each as an individual .pt file.
 
     Note: ESM tokenizer adds BOS (<cls>) and EOS (<eos>) tokens automatically.
-    The returned embeddings have BOS/EOS tokens REMOVED, so the embedding length
-    equals the sequence length.
+    The saved embeddings have BOS/EOS tokens REMOVED, so the embedding length
+    equals the sequence length. Each file is saved as <output_dir>/<uid>.pt.
 
     Args:
         sequences: Dictionary mapping uid to protein sequence
         esm_model_path: Path to ESM model
+        output_dir: Directory to save individual embedding files
         batch_size: Batch size for encoding
         max_sequence_length: Maximum sequence length
         device: Device to use
 
     Returns:
-        Dictionary mapping uid to embeddings (without BOS/EOS tokens)
+        Number of sequences encoded
     """
     print("Loading ESM model...")
     model = EsmModel.from_pretrained(esm_model_path).to(device)
     tokenizer = EsmTokenizer.from_pretrained(esm_model_path)
 
     model.eval()
-    sequence_embeddings = {}
+    encoded_count = 0
 
     # Convert to list for batch processing
     uid_list = list(sequences.keys())
@@ -150,27 +156,38 @@ def encode_sequences_with_esm(
             hidden_states = outputs.last_hidden_state
 
             # Remove BOS (first token) and EOS (last valid token) to match sequence length
-            # The embedding should be for the actual residues only
-            # BOS is at position 0, EOS is at the last valid position
             for j, uid in enumerate(batch_uids):
                 seq_len = len(batch_sequences[j])
                 # Extract embeddings for actual residues (positions 1 to seq_len inclusive)
                 # Position 0 is BOS, position seq_len+1 is EOS (or padding)
                 embedding = hidden_states[j, 1:seq_len+1, :].cpu()  # (seq_len, hidden_size)
-                sequence_embeddings[uid] = embedding
+                # Save individual file named by uid
+                uid_path = os.path.join(output_dir, f"{uid}.pt")
+                torch.save(embedding, uid_path)
+                encoded_count += 1
 
     # Clean up model to free GPU memory
     del model
     torch.cuda.empty_cache()
 
-    print(f"Encoded {len(sequence_embeddings)} sequences")
-    return sequence_embeddings
+    print(f"Encoded {encoded_count} sequences")
+    return encoded_count
+
+
+def build_output_dir(base_dir: str, esm_model_path: str, data_root: str) -> str:
+    """
+    Build output directory path incorporating the last folder of esm_model_path and data_root.
+    e.g. base_dir/esm_embeddings/<esm_model_name>/<data_name>/
+    """
+    esm_model_name = os.path.basename(os.path.normpath(esm_model_path))
+    data_name = os.path.basename(os.path.normpath(data_root))
+    return os.path.join(base_dir, "esm_embeddings", esm_model_name, data_name)
 
 
 def main():
     parser = argparse.ArgumentParser(description="Preprocess ESM embeddings for ProteinSAM")
 
-    parser.add_argument("--data_root", type=str, default="../data",
+    parser.add_argument("--data_root", type=str, default="../data_70",
                        help="Root directory for datasets")
     parser.add_argument("--data_name", type=str,
                        default="VenusX_Dom||VenusX_Act||VenusX_BindI||VenusX_Motif||VenusX_Evo",
@@ -184,16 +201,21 @@ def main():
                        help="Maximum protein sequence length")
     parser.add_argument("--device", type=str, default="cuda",
                        help="Device to use for encoding")
-    parser.add_argument("--output_path", type=str, default="./esm_embeddings_3B.pt",
-                       help="Output path for ESM embeddings")
+    parser.add_argument("--output_base_dir", type=str, default=".",
+                       help="Base directory under which esm_embeddings/<model>/<data>/ will be created")
 
     args = parser.parse_args()
+
+    # Auto-derive output directory from model and data names
+    output_dir = build_output_dir(args.output_base_dir, args.esm_model_path, args.data_root)
+    os.makedirs(output_dir, exist_ok=True)
 
     print("=== ESM Embedding Preprocessing for ProteinSAM ===")
     print(f"Data root: {args.data_root}")
     print(f"ESM model: {args.esm_model_path}")
     print(f"Max sequence length: {args.max_sequence_length}")
     print(f"Device: {args.device}")
+    print(f"Output directory: {output_dir}")
     print()
 
     # Step 1: Extract all sequences
@@ -213,35 +235,19 @@ def main():
     print(f"Sequence length stats: min={min(seq_lengths)}, max={max(seq_lengths)}, avg={sum(seq_lengths)/len(seq_lengths):.1f}")
     print()
 
-    # Step 2: Encode sequences
-    print("Step 2: Encoding sequences with ESM...")
-    sequence_embeddings = encode_sequences_with_esm(
+    # Step 2: Encode sequences and save individual files
+    print("Step 2: Encoding sequences with ESM and saving individual .pt files...")
+    encoded_count = encode_sequences_with_esm(
         sequences=sequences,
         esm_model_path=args.esm_model_path,
+        output_dir=output_dir,
         batch_size=args.batch_size,
         max_sequence_length=args.max_sequence_length,
         device=args.device
     )
 
-    # Step 3: Save embeddings
-    print("Step 3: Saving ESM embeddings...")
-
-    # Get embedding dimension from first embedding
-    sample_embedding = list(sequence_embeddings.values())[0]
-    embedding_dim = sample_embedding.shape[-1]
-
-    torch.save({
-        "sequence_embeddings": sequence_embeddings,
-        "uid_list": list(sequences.keys()),
-        "esm_model_path": args.esm_model_path,
-        "max_sequence_length": args.max_sequence_length,
-        "embedding_dim": embedding_dim,
-        "note": "Embeddings are stored WITHOUT BOS/EOS tokens. Shape is (seq_len, hidden_size)."
-    }, args.output_path)
-
-    print(f"ESM embeddings saved to: {args.output_path}")
-    print(f"Embedding dimension: {embedding_dim}")
-    print(f"Total embeddings: {len(sequence_embeddings)}")
+    print(f"All embeddings saved to: {output_dir}")
+    print(f"Total embeddings: {encoded_count}")
     print("Preprocessing completed!")
 
 
