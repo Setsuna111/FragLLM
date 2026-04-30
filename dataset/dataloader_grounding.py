@@ -478,12 +478,13 @@ class FragGroundingGroup(FragRefDataset):
     def _load_annotations(self, ann_file):
         data_infos = []
         for item in ann_file:
-            if item["completeness"] == "yes":
-                data_item = {}
-                data_item["uid"] = item["uid"]
-                data_item["sequence"] = item["sequence"]
-                data_item["fragments"] = item["fragments"]
-                data_infos.append(data_item)
+            if "completeness" in item and item["completeness"] == "no":
+                continue
+            data_item = {}
+            data_item["uid"] = item["uid"]
+            data_item["sequence"] = item["sequence"]
+            data_item["fragments"] = item["fragments"]
+            data_infos.append(data_item)
         return data_infos
     
 

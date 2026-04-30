@@ -9,7 +9,7 @@ This script supports:
 """
 import argparse
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 import random
 import numpy as np
 import torch
@@ -369,7 +369,7 @@ def main():
                        help="Which Llama layer to use for text encoding")
 
     # Data arguments
-    parser.add_argument("--data_root", type=str, default="../data",
+    parser.add_argument("--data_root", type=str, default="../data_70",
                        help="Root directory for datasets")
     parser.add_argument("--data_name", type=str, default="VenusX_Dom||VenusX_Act||VenusX_BindI||VenusX_Motif||VenusX_Evo",
                        help="Dataset name(s). Single: 'VenusX_Dom' or Multiple: 'VenusX_Dom||VenusX_Act||VenusX_BindI'")

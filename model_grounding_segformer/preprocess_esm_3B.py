@@ -10,7 +10,7 @@ Usage:
 """
 
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+os.environ["CUDA_VISIBLE_DEVICES"] = "3"
 import json
 import torch
 from transformers import EsmModel, EsmTokenizer

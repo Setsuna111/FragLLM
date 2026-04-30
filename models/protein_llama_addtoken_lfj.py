@@ -118,6 +118,9 @@ class ProteinLlamaForCausalLM(LlamaForCausalLM, ProteinMetaForCausalLM):
             for i, position_mask in enumerate(position_masks):
                 if position_mask.any():
                     assert position_grds[i] is not None
+                    flat_position_grds = []
+                    for position_group in position_grds[i]:
+                        flat_position_grds.extend(position_group)
                     # Get all position tokens for this sample
                     postoken_hidden_states_all = hidden_states[i][position_mask]  # (num_tokens, hidden_size)
                     num_tokens = postoken_hidden_states_all.shape[0]
@@ -131,10 +134,9 @@ class ProteinLlamaForCausalLM(LlamaForCausalLM, ProteinMetaForCausalLM):
                         # Extract corresponding ground truth labels for training
                         start_labels = None
                         end_labels = None
-                        if (position_grds[i] is not None and len(position_grds[i]) > 0 and 
-                            len(position_grds[i][0]) > token_idx):
+                        if len(flat_position_grds) > token_idx:
                             # Extract position pair for this specific token
-                            position_pair = position_grds[i][0][token_idx]  # [group][position_idx][start,end]
+                            position_pair = flat_position_grds[token_idx]
                             start_labels = torch.tensor([position_pair[0]], device=protein_input_ids.device)
                             end_labels = torch.tensor([position_pair[1] - 1], device=protein_input_ids.device)
                         # for segmentation loss calculation

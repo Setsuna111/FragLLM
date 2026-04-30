@@ -507,7 +507,9 @@ class ProteinMetaForCausalLM(ABC):
             # print("-------------:", inputs_embeds.requires_grad)
             # print("*************:", adapter_output.requires_grad)
             # inputs_embeds[placeholder_mask] = adapter_output[encoder_mask]
+
             inputs_embeds[placeholder_mask] = adapter_output[encoder_mask]  # debug only for #
+
             # mask3d = placeholder_mask.unsqueeze(-1).expand_as(inputs_embeds)  # [B, T, D]
             # src = encoder_hidden_states[encoder_mask].reshape(-1)             # [N*D]
             # inputs_embeds = inputs_embeds.masked_scatter(mask3d, src) 

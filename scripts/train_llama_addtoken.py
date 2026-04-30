@@ -11,7 +11,7 @@ import sys
 sys.path.append("..")
 sys.path.append(".")
 
-# import os
+import os
 # os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
 import pathlib
@@ -91,9 +91,9 @@ class FragModelArguments:
 class FragDataArguments:
     """Data arguments for fragment training."""
     root_dir: Optional[str] = field(default="./data", metadata={"help": "Root directory for datasets"})
-    use_detailed_template: Optional[bool] = field(default=False, metadata={"help": "Whether to use detailed template"})
-    dataset_train_config: Optional[str] = field(default="ActGroundSingle||ActRefClass", metadata={"help": "Dataset config for training"})
-    # dataset_train_config: Optional[str] = field(default="ActRefClass", metadata={"help": "Dataset config for training"})
+    use_detailed_template: Optional[bool] = field(default=True, metadata={"help": "Whether to use detailed template"})
+    # dataset_train_config: Optional[str] = field(default="ActGroundSingle||ActRefClass", metadata={"help": "Dataset config for training"})
+    dataset_train_config: Optional[str] = field(default="ActGroundGroup", metadata={"help": "Dataset config for training"})
     dataset_valid_config: Optional[str] = field(default=None, metadata={"help": "Dataset config for evaluation"})
     max_sequence_length: Optional[int] = field(default=1021, metadata={"help": "Maximum sequence length"})
     filter_sequence: Optional[bool] = field(default=False, metadata={"help": "Whether to filter sequence"})

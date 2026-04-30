@@ -733,7 +733,7 @@ if __name__ == '__main__':
                         help='Dropout rate')
 
     # Training arguments
-    parser.add_argument('--epochs', type=int, default=20)
+    parser.add_argument('--epochs', type=int, default=10)
     parser.add_argument('--lr', type=float, default=1e-4)
     parser.add_argument('--batch_size', type=int, default=16,
                         help='Number of proteins per batch')
@@ -743,7 +743,7 @@ if __name__ == '__main__':
     parser.add_argument('--device', type=str, default='cuda:3')
 
     # Ensemble arguments
-    parser.add_argument('--num_ensemble', type=int, default=1,
+    parser.add_argument('--num_ensemble', type=int, default=5,
                         help='Number of models in ensemble')
     parser.add_argument('--base_seed', type=int, default=42,
                         help='Base random seed (each model uses base_seed + model_idx)')
