@@ -8,7 +8,7 @@ This script supports:
 """
 
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "2"
+os.environ["CUDA_VISIBLE_DEVICES"] = "3"
 import torch
 from protein_sam import ProteinSAM
 from dataset import get_datasets_and_collator, get_datasets_and_collator_with_esm_cache
@@ -235,15 +235,15 @@ def run_dataset_inference(
 def main():
     parser = argparse.ArgumentParser(description="ProteinSAM Dataset Inference")
 
-    parser.add_argument("--checkpoint_path", type=str, default="./checkpoints_grounding_3B_sigmoid_head/best_model.pt",
+    parser.add_argument("--checkpoint_path", type=str, default="./checkpoints_grounding_3B_cluster_70/checkpoint_epoch_40.pt",
                        help="Path to trained model checkpoint")
     parser.add_argument("--params_file", type=str, default=None,
                        help="Path to model hyperparameters JSON file. "
                             "If not provided, will look for 'protein_sam_init_params.json' "
                             "in the checkpoint directory")
-    parser.add_argument("--data_root", type=str, default="../data",
+    parser.add_argument("--data_root", type=str, default="../data_70",
                        help="Root directory for datasets")
-    parser.add_argument("--data_name", type=str, default='VenusX_Act',
+    parser.add_argument("--data_name", type=str, default='VenusX_Dom',
                        help="Dataset name(s). Single: 'VenusX_Dom' or Multiple: 'VenusX_Dom||VenusX_Act||VenusX_BindI'")
     parser.add_argument("--device", type=str, default="cuda",
                        help="Device to use for inference")
@@ -251,8 +251,9 @@ def main():
                        help="Inference batch size")
     parser.add_argument("--output_file", type=str, default=None,
                        help="Output file for predictions. If not provided, will save to checkpoint directory with name 'inference_results.json'")
-    parser.add_argument("--esm_embeddings_path", type=str, default="./esm_embeddings_3B.pt",
-                       help="Override ESM embeddings path from model params. Only used if model uses ESM cache.")
+    parser.add_argument("--esm_embeddings_base_dir", type=str, default=".",
+                       help="Base directory under which esm_embeddings/<model>/<data>/ was created by preprocess_esm_3B.py. "
+                            "Mirrors the training script's --esm_embeddings_base_dir.")
 
     args = parser.parse_args()
 
@@ -277,22 +278,24 @@ def main():
     llama_model_path = model_params.get("llama_model_path")
     use_category_cache = model_params.get("use_category_cache", True)
     use_esm_cache = True
-    esm_embeddings_path = args.esm_embeddings_path
-    print(f"   Using ESM embeddings path with: {esm_embeddings_path}")
+
+    # Auto-derive esm_embeddings_dir the same way the training script does
+    esm_model_name = os.path.basename(os.path.normpath(esm_model_path))
+    data_root_name = os.path.basename(os.path.normpath(args.data_root))
+    esm_embeddings_dir = os.path.join(
+        args.esm_embeddings_base_dir, "esm_embeddings", esm_model_name, data_root_name
+    )
+    print(f"   Using ESM embeddings directory: {esm_embeddings_dir}")
 
     print(f"\n1. Loading datasets: {args.data_name}")
     print(f"   Using ESM cache: {use_esm_cache}")
     if use_esm_cache:
-        print(f"   ESM embeddings path: {esm_embeddings_path}")
-        if esm_embeddings_path is None:
-            raise ValueError("ESM embeddings path must be provided when use_esm_cache=True")
-
         # Use pre-computed ESM embeddings
         datasets, collator = get_datasets_and_collator_with_esm_cache(
             root_dir=args.data_root,
             data_name=args.data_name,
             esm_model_path=esm_model_path,
-            esm_embeddings_path=esm_embeddings_path,
+            esm_embeddings_dir=esm_embeddings_dir,
             llama_model_path=llama_model_path if not use_category_cache else None,
             max_sequence_length=model_params.get("max_sequence_length", 1021),
             max_text_length=128,

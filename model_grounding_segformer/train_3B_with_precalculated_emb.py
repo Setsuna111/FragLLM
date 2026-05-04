@@ -419,7 +419,7 @@ def main():
                        help="Use N*1 sigmoid output head instead of default N*2 softmax head")
 
     # Dataset-specific arguments
-    parser.add_argument("--null_position_prob", type=float, default=0.3,
+    parser.add_argument("--null_position_prob", type=float, default=0.0,
                        help="Probability to set position prompt to null")
     parser.add_argument("--random_position_prob", type=float, default=0.0,
                        help="Probability to set random position")
@@ -427,7 +427,7 @@ def main():
                        help="Standard deviation for position noise")
 
     # Other arguments
-    parser.add_argument("--output_dir", type=str, default="./checkpoints_grounding_3B_cluster_70",
+    parser.add_argument("--output_dir", type=str, default="./checkpoints_grounding_3B_cluster_70_point_only",
                        help="Output directory for model checkpoints")
     parser.add_argument("--log_dir", type=str, default="./logs",
                        help="Directory for logs")
