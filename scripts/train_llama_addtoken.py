@@ -63,7 +63,7 @@ class FragModelArguments:
     fix_modality_adapter: Optional[bool] = field(default=False, metadata={"help": "Whether to fix modality adapter"})
     
     # Fragment adapter arguments
-    perceiver_latent_size: Optional[int] = field(default=1, metadata={"help": "Perceiver latent size"})
+    perceiver_latent_size: Optional[int] = field(default=4, metadata={"help": "Perceiver latent size"})
     num_perceiver_heads: Optional[int] = field(default=8, metadata={"help": "Number of perceiver heads"})
     num_perceiver_layers: Optional[int] = field(default=2, metadata={"help": "Number of perceiver layers"})
     intermediate_dim: Optional[int] = field(default=2048, metadata={"help": "Intermediate dimension"})
@@ -76,7 +76,11 @@ class FragModelArguments:
     position_loss_weight: Optional[float] = field(default=0.1, metadata={"help": "position loss weight"})
 
     # Fragment adapter type
-    frag_adapter_type: Optional[str] = field(default="qformer", metadata={"help": "Fragment adapter type: 'qformer' or 'multilevel'"})
+    frag_adapter_type: Optional[str] = field(default="hierarchical", metadata={"help": "Fragment adapter type: 'qformer', 'multilevel', or 'hierarchical'"})
+    fragment_block_size: Optional[int] = field(default=4, metadata={"help": "Block size for sub-fragment compression in hierarchical adapter"})
+    global_block_size: Optional[int] = field(default=32, metadata={"help": "Block size for global protein compression in hierarchical adapter"})
+    global_topk: Optional[int] = field(default=8, metadata={"help": "Number of compressed global context tokens selected in hierarchical adapter"})
+    max_sub_tokens: Optional[int] = field(default=8, metadata={"help": "Maximum number of sub-fragment semantic tokens in hierarchical adapter"})
 
     # Pos decoder type
     pos_decoder_type: Optional[str] = field(default="ProteinSAM", metadata={"help": "Pos decoder type: 'ProteinSAM', 'Simple'"})
@@ -93,7 +97,7 @@ class FragDataArguments:
     root_dir: Optional[str] = field(default="./data", metadata={"help": "Root directory for datasets"})
     use_detailed_template: Optional[bool] = field(default=True, metadata={"help": "Whether to use detailed template"})
     # dataset_train_config: Optional[str] = field(default="ActGroundSingle||ActRefClass", metadata={"help": "Dataset config for training"})
-    dataset_train_config: Optional[str] = field(default="ActGroundGroup", metadata={"help": "Dataset config for training"})
+    dataset_train_config: Optional[str] = field(default="ActRefClass", metadata={"help": "Dataset config for training"})
     dataset_valid_config: Optional[str] = field(default=None, metadata={"help": "Dataset config for evaluation"})
     max_sequence_length: Optional[int] = field(default=1021, metadata={"help": "Maximum sequence length"})
     filter_sequence: Optional[bool] = field(default=False, metadata={"help": "Whether to filter sequence"})

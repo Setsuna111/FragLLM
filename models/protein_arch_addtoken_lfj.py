@@ -9,6 +9,10 @@ import os
 import json
 from pathlib import Path
 from model_grounding_segformer.protein_sam import ProteinSAM
+try:
+    from .hierarchical_fragment_adapter import HierarchicalFragmentAdapter
+except ImportError:
+    from models.hierarchical_fragment_adapter import HierarchicalFragmentAdapter
 
 
 def load_protein_sam_params_with_overrides(checkpoint_path: str, esm_model_path: str) -> Dict[str, Any]:
@@ -250,6 +254,10 @@ class FragmentAdapter(nn.Module):
         num_perceiver_layers: int,
         dropout: float,
         frag_adapter_type: str = "qformer",  # "qformer" or "multilevel"
+        fragment_block_size: int = 4,
+        global_block_size: int = 32,
+        global_topk: int = 8,
+        max_sub_tokens: int = 8,
     ) -> None:
         super(FragmentAdapter, self).__init__()
         self.protein_layer_norm = nn.LayerNorm(protein_emb_dim)
@@ -266,8 +274,21 @@ class FragmentAdapter(nn.Module):
                 text_emb_dim, perceiver_latent_size, text_emb_dim, num_perceiver_heads, num_perceiver_layers, dropout,
                 protein_emb_dim=protein_emb_dim, text_emb_dim=text_emb_dim
             )
+        elif frag_adapter_type == "hierarchical":
+            self.perceiver_layer = HierarchicalFragmentAdapter(
+                protein_emb_dim=protein_emb_dim,
+                text_emb_dim=text_emb_dim,
+                latent_size=perceiver_latent_size,
+                num_heads=num_perceiver_heads,
+                num_layers=num_perceiver_layers,
+                dropout=dropout,
+                fragment_block_size=fragment_block_size,
+                global_block_size=global_block_size,
+                global_topk=global_topk,
+                max_sub_tokens=max_sub_tokens,
+            )
         else:
-            raise ValueError(f"Unknown frag_adapter_type: {frag_adapter_type}. Must be 'qformer' or 'multilevel'")
+            raise ValueError(f"Unknown frag_adapter_type: {frag_adapter_type}. Must be 'qformer', 'multilevel', or 'hierarchical'")
 
     def forward(
         self,
@@ -331,6 +352,24 @@ class FragmentAdapter(nn.Module):
                     dummy_latents = self.perceiver_layer(dummy_frag_features, dummy_global_feature)
                     all_frag_latents.append(dummy_latents)
 
+        elif self.frag_adapter_type == "hierarchical":
+            # Hierarchical mode uses only original ESM protein features.
+            for i in range(batch_size):
+                protein_emb = encoder_hidden_states[i]
+                encoder_mask = encoder_attention_mask[i].bool()
+                if not encoder_mask.any():
+                    encoder_mask = torch.ones(
+                        protein_emb.size(0), dtype=torch.bool, device=protein_emb.device
+                    )
+                protein_features = protein_emb[encoder_mask]
+                position_ref = position_refs[i]
+
+                if position_ref is not None:
+                    all_frag_latents.append(self.perceiver_layer(protein_features, tuple(position_ref)))
+                else:
+                    dummy_position_ref = (0, protein_features.size(0))
+                    all_frag_latents.append(self.perceiver_layer(protein_features, dummy_position_ref))
+
         # 3. Reconstruct the final output list.
         # This final loop is fine because it doesn't call any nn.Modules.
         # It just selects the results based on the original condition.
@@ -381,7 +420,19 @@ class ProteinMetaModel:
             self.esm_encoder = EsmModel.from_pretrained(config.esm_path, add_pooling_layer=False)
             self.adapter = ModalityAdapter(config.protein_emb_dim, config.intermediate_dim, config.hidden_size, config.dropout_rate)
             frag_adapter_type = getattr(config, "frag_adapter_type", "qformer")  # Default to qformer for backward compatibility
-            self.fragment_adapter = FragmentAdapter(config.protein_emb_dim, config.hidden_size, config.perceiver_latent_size, config.num_perceiver_heads, config.num_perceiver_layers, config.dropout_rate, frag_adapter_type=frag_adapter_type)
+            self.fragment_adapter = FragmentAdapter(
+                config.protein_emb_dim,
+                config.hidden_size,
+                config.perceiver_latent_size,
+                config.num_perceiver_heads,
+                config.num_perceiver_layers,
+                config.dropout_rate,
+                frag_adapter_type=frag_adapter_type,
+                fragment_block_size=getattr(config, "fragment_block_size", 4),
+                global_block_size=getattr(config, "global_block_size", 32),
+                global_topk=getattr(config, "global_topk", 8),
+                max_sub_tokens=getattr(config, "max_sub_tokens", 8),
+            )
             self.protein_sam = ProteinSAM(**load_protein_sam_params_with_overrides(config.protein_sam_checkpoint_path, config.esm_path))
     
     def get_esm_encoder(self):
@@ -398,6 +449,10 @@ class ProteinMetaModel:
         self.config.num_perceiver_heads = model_args.num_perceiver_heads
         self.config.num_perceiver_layers = model_args.num_perceiver_layers
         self.config.frag_adapter_type = getattr(model_args, "frag_adapter_type", "qformer")  # Default to qformer
+        self.config.fragment_block_size = getattr(model_args, "fragment_block_size", 4)
+        self.config.global_block_size = getattr(model_args, "global_block_size", 32)
+        self.config.global_topk = getattr(model_args, "global_topk", 8)
+        self.config.max_sub_tokens = getattr(model_args, "max_sub_tokens", 8)
 
         if self.get_esm_encoder() is None:
             esm_encoder = EsmModel.from_pretrained(model_args.esm_path, add_pooling_layer=False)
@@ -423,7 +478,11 @@ class ProteinMetaModel:
                 self.config.num_perceiver_heads,
                 self.config.num_perceiver_layers,
                 self.config.dropout_rate,
-                frag_adapter_type=self.config.frag_adapter_type
+                frag_adapter_type=self.config.frag_adapter_type,
+                fragment_block_size=self.config.fragment_block_size,
+                global_block_size=self.config.global_block_size,
+                global_topk=self.config.global_topk,
+                max_sub_tokens=self.config.max_sub_tokens,
             )
         if getattr(self, "protein_sam", None) is None:
             self.protein_sam = ProteinSAM(**load_protein_sam_params_with_overrides(model_args.protein_sam_checkpoint_path, model_args.esm_path))
@@ -509,6 +568,7 @@ class ProteinMetaForCausalLM(ABC):
             # inputs_embeds[placeholder_mask] = adapter_output[encoder_mask]
 
             inputs_embeds[placeholder_mask] = adapter_output[encoder_mask]  # debug only for #
+            # inputs_embeds[placeholder_mask] = adapter_output[encoder_mask].to(torch.bfloat16) # debug only
 
             # mask3d = placeholder_mask.unsqueeze(-1).expand_as(inputs_embeds)  # [B, T, D]
             # src = encoder_hidden_states[encoder_mask].reshape(-1)             # [N*D]
@@ -526,6 +586,7 @@ class ProteinMetaForCausalLM(ABC):
                 )
                 fragment_mask = input_ids == self.config.fragment_placeholder_id
                 inputs_embeds[fragment_mask] = torch.cat([fragment_embed for fragment_embed in fragment_embeds if fragment_embed is not None], dim=-2)
+                # inputs_embeds[fragment_mask] = torch.cat([fragment_embed for fragment_embed in fragment_embeds if fragment_embed is not None], dim=-2).to(torch.bfloat16)  # debug only
             else:
                 dummy_protein_hidden_states= torch.zeros(encoder_hidden_states.size(0), encoder_hidden_states.size(1), encoder_hidden_states.size(2), device=encoder_hidden_states.device, dtype=encoder_hidden_states.dtype)
                 dummy_position_refs = [[0, encoder_hidden_states.size(1)] for _ in range(batch_size)]
