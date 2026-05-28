@@ -55,6 +55,7 @@ class FragModelArguments:
     load_adapter_checkpoint_dir: Optional[str] = field(default=None, metadata={"help": "Path to load adapter checkpoint"})
     load_fragment_checkpoint_dir: Optional[str] = field(default=None, metadata={"help": "Path to load fragment checkpoint"})
     load_pro2text_checkpoint_dir: Optional[str] = field(default="/home/dataset-local/projects_dir/pretrained_model/Prot2Text-V2-11B-Instruct-hf", metadata={"help": "Path to load fragment checkpoint"})
+    # load_pro2text_checkpoint_dir: Optional[str] = field(default=None, metadata={"help": "Path to load fragment checkpoint"})
     
     # Grounding model arguments
     protein_sam_checkpoint_path: Optional[str] = field(default='./model_grounding_segformer/checkpoints_grounding_3B/best_model.pt', metadata={"help": "Path to ProteinSAM checkpoint (.pt file). Required for training."})

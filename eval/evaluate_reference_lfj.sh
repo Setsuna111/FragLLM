@@ -8,10 +8,10 @@
 # ======================================
 
 # Model and data paths
-MODEL_PATH="/home/lfj/projects_dir/FragLLM/checkpoints/test_load_stage1_lora_0915_multi_scale_final_data_wo_domain_merge/"
-ROOT_DIR="./data"
+MODEL_PATH="/home/dataset-local/projects_dir/FragLLM/checkpoints/0519_ref_desc_small_4_hierarchical_no_prot2text/checkpoint-8500_merge/"
+ROOT_DIR="./data_70"
 RESULTS_DIR="./eval_results"
-MODEL_IDENTIFIER="test_load_stage1_lora_0915_multi_scale_final_data_wo_domain_merge"  # Identifier for this model configuration
+MODEL_IDENTIFIER="0519_ref_desc_small_4_hierarchical_no_prot2text_8500"  # Identifier for this model configuration
 
 # Evaluation parameters
 SPLIT="test"
@@ -19,9 +19,9 @@ BATCH_PER_DEVICE=4
 TEMPERATURE=0.0
 
 # GPU configuration
-USE_SINGLE_GPU=false  # Set to true for single GPU mode, false for multi-GPU
+USE_SINGLE_GPU=true  # Set to true for single GPU mode, false for multi-GPU
 SINGLE_GPU_ID=0       # GPU ID to use in single GPU mode
-export CUDA_VISIBLE_DEVICES=4  # Specify visible GPUs for multi-GPU mode
+export CUDA_VISIBLE_DEVICES=2  # Specify visible GPUs for multi-GPU mode
 NUM_GPUS=1           # Number of GPUs for distributed training
 MASTER_PORT=24989     # Master port for distributed training
 
@@ -37,7 +37,7 @@ MASTER_PORT=24989     # Master port for distributed training
 # DATASETS="Pro2Text,ActRefClass,MotifRefDesc"          # Mixed function and reference datasets
 # DATASETS="MotifRefDesc,ActRefClass"                      # Default: two small reference datasets
 # DATASETS="MotifRefDesc,ActRefDesc,BindIRefDesc,DomRefDesc,EvoRefDesc"  # All five reference desc datasets
-DATASETS="ActRefClass,BindIRefClass,EvoRefClass,MotifRefClass"  # All five reference desc datasets
+DATASETS="ActRefDesc"  # All five reference desc datasets
 # DataSETS="MotifRefDesc,ActRefDesc,BindIRefDesc,EvoRefDesc"
 
 # ======================================

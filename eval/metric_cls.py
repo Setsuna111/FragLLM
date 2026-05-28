@@ -236,11 +236,12 @@ class ReferenceMetrics:
         
         for interpro_id, entry in self.interpro_data.items():
             self.interpro_ids_list.append(interpro_id)
-            self.interpro_descriptions_list.append(entry['description_short'])
+            # self.interpro_descriptions_list.append(entry['description_short'])
+            self.interpro_descriptions_list.append(entry['category'])  # 0513 update
         
         # Encode all descriptions in batches to avoid OOM
         self._initialize_embedding_model()
-        import pdb; pdb.set_trace()
+        # import pdb; pdb.set_trace()
         if self.embedding_model is None:
             raise ValueError("Embedding model not available for computing label embeddings")
         
