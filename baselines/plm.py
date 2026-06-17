@@ -1,4 +1,5 @@
 import os
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 import sys
 
 # Add project root to path for imports
@@ -15,9 +16,21 @@ from sklearn.metrics.pairwise import cosine_similarity
 import warnings
 warnings.filterwarnings('ignore')
 
-def load_venusx_dataset(dataset_name, split):
+def resolve_data_dir(data_dir):
+    """Resolve dataset root relative to project root unless an absolute path is given."""
+    data_dir = os.path.expanduser(data_dir)
+    if os.path.isabs(data_dir):
+        return data_dir
+    return os.path.join(project_root, data_dir)
+
+def get_data_dir_name(data_dir):
+    """Get a stable name for separating output/cache directories."""
+    return os.path.basename(os.path.normpath(data_dir))
+
+def load_venusx_dataset(dataset_name, split, data_dir="data"):
     """Load VenusX dataset from JSON file"""
-    dataset_path = os.path.join(project_root, "data", f"VenusX_{dataset_name}", f"{split}.json")
+    data_root = resolve_data_dir(data_dir)
+    dataset_path = os.path.join(data_root, f"VenusX_{dataset_name}", f"{split}.json")
     if not os.path.exists(dataset_path):
         raise FileNotFoundError(f"Dataset file not found: {dataset_path}")
     
@@ -177,24 +190,31 @@ def get_model_name(model_path):
     
     return model_name
 
-def main(dataset_name, model_path, batch_size, out_dir, use_cuda):
+def main(dataset_name, model_path, batch_size, out_dir, use_cuda, data_dir="data"):
     """Main function for PLM-based VenusX analysis"""
     model_name = get_model_name(model_path)
+    data_root = resolve_data_dir(data_dir)
+    data_dir_name = get_data_dir_name(data_root)
     print(f"[*] Processing VenusX_{dataset_name} dataset with PLM ({model_name})...")
+    print(f"Using dataset root: {data_root}")
     
     # Setup device
     device = torch.device('cuda' if use_cuda and torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
     
-    # Create output directory with model-specific subdirectory
-    dataset_out_dir = os.path.join(out_dir, model_name, f"VenusX_{dataset_name}")
+    # Create output directory with model-specific subdirectory.
+    # Keep the legacy path for the default data/ split, but isolate alternate splits.
+    if data_dir_name == "data":
+        dataset_out_dir = os.path.join(out_dir, model_name, f"VenusX_{dataset_name}")
+    else:
+        dataset_out_dir = os.path.join(out_dir, model_name, data_dir_name, f"VenusX_{dataset_name}")
     os.makedirs(dataset_out_dir, exist_ok=True)
     
     # Step 1: Load datasets and extract fragments
     print("[1] Loading datasets and extracting fragments...")
     
-    train_data = load_venusx_dataset(dataset_name, "train")
-    test_data = load_venusx_dataset(dataset_name, "test")
+    train_data = load_venusx_dataset(dataset_name, "train", data_root)
+    test_data = load_venusx_dataset(dataset_name, "test", data_root)
     
     train_sequences, train_labels, train_ids = extract_fragments_with_labels(train_data)
     test_sequences, test_labels, test_ids = extract_fragments_with_labels(test_data)
@@ -266,6 +286,8 @@ def main(dataset_name, model_path, batch_size, out_dir, use_cuda):
     # Save additional metadata
     metadata = {
         'dataset_name': dataset_name,
+        'data_dir': data_dir,
+        'data_root': data_root,
         'model_path': model_path,
         'batch_size': batch_size,
         'device': str(device),
@@ -285,19 +307,21 @@ def main(dataset_name, model_path, batch_size, out_dir, use_cuda):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Protein Language Model analysis for VenusX protein fragments")
-    parser.add_argument("--dataset", choices=["Act", "BindI", "Dom", "Evo", "Motif"], required=True,
+    parser.add_argument("--dataset", choices=["Act", "BindI", "Dom", "Evo", "Motif"], default='Act',
                        help="VenusX dataset to analyze")
     parser.add_argument("--model_path", type=str, 
-                       default="/home/dataset-locall/projects_dir/pretrained_model/models--facebook--esm2_t33_650M_UR50D/",
+                       default="/home/dataset-local/projects_dir/pretrained_model/models--facebook--esm2_t33_650M_UR50D/",
                        help="Path to protein language model (ESM2, ProtBERT, etc.)")
     parser.add_argument("--batch_size", type=int, default=16, 
                        help="Batch size for encoding sequences")
     parser.add_argument("--out_dir", type=str, default=os.path.join(project_root, "baselines", "plm_results"), 
                        help="Output directory")
-    parser.add_argument("--cpu", action="store_true", 
+    parser.add_argument("--data_dir", type=str, default="data_70",
+                       help="Dataset root directory, e.g. data, data_70, data_30, or an absolute path")
+    parser.add_argument("--cpu", default=False, action="store_true", 
                        help="Force CPU usage (default: use CUDA if available)")
     
     args = parser.parse_args()
     
     os.makedirs(args.out_dir, exist_ok=True)
-    main(args.dataset, args.model_path, args.batch_size, args.out_dir, not args.cpu)
+    main(args.dataset, args.model_path, args.batch_size, args.out_dir, not args.cpu, args.data_dir)

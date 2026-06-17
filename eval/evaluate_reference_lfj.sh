@@ -8,10 +8,11 @@
 # ======================================
 
 # Model and data paths
-MODEL_PATH="/home/dataset-local/projects_dir/FragLLM/checkpoints/0519_ref_desc_small_4_hierarchical_no_prot2text/checkpoint-8500_merge/"
+# MODEL_PATH="/home/dataset-local/projects_dir/FragLLM/checkpoints/0513_ref_small_4_hierarchical/checkpoint-4500_merge/"
+MODEL_PATH="/home/dataset-local/projects_dir/FragLLM/checkpoints/0529_all/checkpoint-123500_merge/"
 ROOT_DIR="./data_70"
 RESULTS_DIR="./eval_results"
-MODEL_IDENTIFIER="0519_ref_desc_small_4_hierarchical_no_prot2text_8500"  # Identifier for this model configuration
+MODEL_IDENTIFIER="0529_all_123500"  # Identifier for this model configuration
 
 # Evaluation parameters
 SPLIT="test"
@@ -37,8 +38,12 @@ MASTER_PORT=24989     # Master port for distributed training
 # DATASETS="Pro2Text,ActRefClass,MotifRefDesc"          # Mixed function and reference datasets
 # DATASETS="MotifRefDesc,ActRefClass"                      # Default: two small reference datasets
 # DATASETS="MotifRefDesc,ActRefDesc,BindIRefDesc,DomRefDesc,EvoRefDesc"  # All five reference desc datasets
-DATASETS="ActRefDesc"  # All five reference desc datasets
-# DataSETS="MotifRefDesc,ActRefDesc,BindIRefDesc,EvoRefDesc"
+# DATASETS="BindIRefClass,EvoRefClass,MotifRefClass"
+# DATASETS="ActRefDesc"  # All five reference desc datasets
+# DATASETS="MotifRefDesc,BindIRefDesc,EvoRefDesc"
+
+# DATASETS="MotifRefClass,ActRefClass,BindIRefClass,EvoRefClass,MotifRefDesc,ActRefDesc,BindIRefDesc,EvoRefDesc"
+DATASETS="DomRefClass,DomRefDesc"
 
 # ======================================
 # Script Execution - Do not modify below unless needed

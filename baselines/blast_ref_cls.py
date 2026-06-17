@@ -13,9 +13,9 @@ import argparse
 import json
 from tqdm import tqdm
 
-def load_venusx_dataset(dataset_name, split):
+def load_venusx_dataset(dataset_name, split, data_dir):
     """Load VenusX dataset from JSON file"""
-    dataset_path = os.path.join(project_root, "data", f"VenusX_{dataset_name}", f"{split}.json")
+    dataset_path = os.path.join(project_root, data_dir, f"VenusX_{dataset_name}", f"{split}.json")
     if not os.path.exists(dataset_path):
         raise FileNotFoundError(f"Dataset file not found: {dataset_path}")
     
@@ -133,19 +133,19 @@ def parse_blast_results(blast_output, train_interpro_index, test_interpro_index)
     
     return predictions
 
-def main(dataset_name, num_threads, out_dir):
+def main(dataset_name, num_threads, out_dir, data_dir):
     """Main function for VenusX BLAST analysis"""
     print(f"[*] Processing VenusX_{dataset_name} dataset...")
     
     # Create output directory
-    dataset_out_dir = os.path.join(out_dir, f"VenusX_{dataset_name}")
+    dataset_out_dir = os.path.join(out_dir, f"VenusX_{dataset_name}_{data_dir}")
     os.makedirs(dataset_out_dir, exist_ok=True)
     
     # Step 1: Load datasets and extract fragments
     print("[1] Loading datasets and extracting fragments...")
     
-    train_data = load_venusx_dataset(dataset_name, "train")
-    test_data = load_venusx_dataset(dataset_name, "test")
+    train_data = load_venusx_dataset(dataset_name, "train", data_dir)
+    test_data = load_venusx_dataset(dataset_name, "test", data_dir)
     
     # Extract train fragments
     train_fasta = os.path.join(dataset_out_dir, "train_fragments.fasta")
@@ -201,12 +201,12 @@ def main(dataset_name, num_threads, out_dir):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="BLAST analysis for VenusX protein fragments")
-    parser.add_argument("--dataset", default="Act",choices=["Act", "BindI", "Dom", "Evo", "Motif"], required=True,
-                       help="VenusX dataset to analyze")
+    parser.add_argument("--data_dir", default="data_70", help="VenusX dataset to analyze")
+    parser.add_argument("--dataset", default="Act",choices=["Act", "BindI", "Dom", "Evo", "Motif"], help="VenusX dataset to analyze")
     parser.add_argument("--num_threads", type=int, default=4, help="Number of threads for BLAST")
-    parser.add_argument("--out_dir", type=str, default=os.path.join(project_root, "baselines", "blast_results"), help="Output directory")
+    parser.add_argument("--out_dir", type=str, default=os.path.join(project_root, "baselines", "blast_ref_cls_results"), help="Output directory")
     
     args = parser.parse_args()
     
     os.makedirs(args.out_dir, exist_ok=True)
-    main(args.dataset, args.num_threads, args.out_dir)
+    main(args.dataset, args.num_threads, args.out_dir, args.data_dir)

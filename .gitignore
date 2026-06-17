@@ -3,6 +3,8 @@ data_*/
 checkpoints*/
 tensorboard_logs/
 .vscode/
+plot/
+Prot2Text-V2/
 
 eval/cache/
 results/
@@ -12,6 +14,7 @@ test_lfj.ipynb
 merge_*_lfj.py
 eval/*_lfj.*
 baselines/*_results/
+baselines/prot2text
 model_grounding_cls/*.log
 model_grounding_cls/category_embeddings.pt
 model_grounding_cls/dataset_predictions.json

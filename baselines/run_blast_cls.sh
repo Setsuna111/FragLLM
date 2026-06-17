@@ -9,9 +9,9 @@ TASK=${2:-"single"}
 if [[ "$DATASET" == "all" ]]; then
     for ds in Act BindI Evo Motif Dom; do
         echo "Running BLAST classification on VenusX_$ds with task $TASK..."
-        python baselines/blast_cls.py --dataset $ds --task $TASK
+        python baselines/blast_grounding.py --dataset $ds --task $TASK
     done
 else
     echo "Running BLAST classification on VenusX_$DATASET with task $TASK..."
-    python baselines/blast_cls.py --dataset $DATASET --task $TASK
+    python baselines/blast_grounding.py --dataset $DATASET --task $TASK
 fi

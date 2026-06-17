@@ -8,7 +8,7 @@ This script supports:
 """
 
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "3"
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 import torch
 from protein_sam import ProteinSAM
 from dataset import get_datasets_and_collator, get_datasets_and_collator_with_esm_cache
@@ -235,15 +235,15 @@ def run_dataset_inference(
 def main():
     parser = argparse.ArgumentParser(description="ProteinSAM Dataset Inference")
 
-    parser.add_argument("--checkpoint_path", type=str, default="./checkpoints_grounding_3B_cluster_70/checkpoint_epoch_40.pt",
-                       help="Path to trained model checkpoint")
+    # parser.add_argument("--checkpoint_path", type=str, default="./checkpoints_grounding_3B_cluster_70_point_only/checkpoint_epoch_40.pt", help="Path to trained model checkpoint")
+    parser.add_argument("--checkpoint_path", type=str, default="./checkpoints_grounding_3B_cluster_30_point_only/checkpoint_epoch_40.pt", help="Path to trained model checkpoint")
     parser.add_argument("--params_file", type=str, default=None,
                        help="Path to model hyperparameters JSON file. "
                             "If not provided, will look for 'protein_sam_init_params.json' "
                             "in the checkpoint directory")
-    parser.add_argument("--data_root", type=str, default="../data_70",
-                       help="Root directory for datasets")
-    parser.add_argument("--data_name", type=str, default='VenusX_Dom',
+    # parser.add_argument("--data_root", type=str, default="../data_70", help="Root directory for datasets")
+    parser.add_argument("--data_root", type=str, default="../data_30", help="Root directory for datasets")
+    parser.add_argument("--data_name", type=str, default='VenusX_Act',
                        help="Dataset name(s). Single: 'VenusX_Dom' or Multiple: 'VenusX_Dom||VenusX_Act||VenusX_BindI'")
     parser.add_argument("--device", type=str, default="cuda",
                        help="Device to use for inference")
@@ -283,7 +283,7 @@ def main():
     esm_model_name = os.path.basename(os.path.normpath(esm_model_path))
     data_root_name = os.path.basename(os.path.normpath(args.data_root))
     esm_embeddings_dir = os.path.join(
-        args.esm_embeddings_base_dir, "esm_embeddings", esm_model_name, data_root_name
+        args.esm_embeddings_base_dir, "esm_embeddings", esm_model_name, 'data_70'
     )
     print(f"   Using ESM embeddings directory: {esm_embeddings_dir}")
 

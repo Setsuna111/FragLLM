@@ -21,7 +21,7 @@ deepspeed --include "localhost:2,3" --master_port $MASTER_PORT  scripts/train_ll
     --dropout_rate 0.3 \
     --intermediate_dim 2048 \
     --perceiver_latent_size 4 \
-    --num_perceiver_heads 8 \
+    --num_perceiver_heads 8 \ 
     --num_perceiver_layers 2 \
     --ce_loss_weight 1.0 \
     --position_loss_weight 5.0 \

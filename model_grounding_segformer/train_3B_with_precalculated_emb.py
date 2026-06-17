@@ -9,7 +9,7 @@ This script supports:
 """
 import argparse
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "2"
+os.environ["CUDA_VISIBLE_DEVICES"] = "3"
 import random
 import numpy as np
 import torch
@@ -369,8 +369,12 @@ def main():
                        help="Which Llama layer to use for text encoding")
 
     # Data arguments
-    parser.add_argument("--data_root", type=str, default="../data_70",
+    # parser.add_argument("--data_root", type=str, default="../data_70",
+    #                    help="Root directory for datasets")
+    parser.add_argument("--data_root", type=str, default="../data_30",
                        help="Root directory for datasets")
+    parser.add_argument("--data_root_for_data", type=str, default="../data_70",
+                       help="为了切换data_30时不在重新编码一遍全数据集，故用这个字段将esm embedding的输出目录命名为data_70")
     parser.add_argument("--data_name", type=str, default="VenusX_Dom||VenusX_Act||VenusX_BindI||VenusX_Motif||VenusX_Evo",
                        help="Dataset name(s). Single: 'VenusX_Dom' or Multiple: 'VenusX_Dom||VenusX_Act||VenusX_BindI'")
     parser.add_argument("--max_sequence_length", type=int, default=1021,
@@ -468,8 +472,9 @@ def main():
         # Auto-derive embeddings directory from model and data names
         esm_model_name = os.path.basename(os.path.normpath(args.esm_model_path))
         data_root_name = os.path.basename(os.path.normpath(args.data_root))
+        data_root_name_for_esm = os.path.basename(os.path.normpath(args.data_root_for_data))
         esm_embeddings_dir = os.path.join(
-            args.esm_embeddings_base_dir, "esm_embeddings", esm_model_name, data_root_name
+            args.esm_embeddings_base_dir, "esm_embeddings", esm_model_name, data_root_name_for_esm
         )
         # Use pre-computed ESM embeddings
         logger.info(f"Using pre-computed ESM embeddings from {esm_embeddings_dir}")
@@ -514,7 +519,8 @@ def main():
     # Initialize model
     logger.info("Initializing model...")
 
-    category_embeddings_path = os.path.join(args.category_embeddings_base_dir, "category_embeddings", os.path.basename(os.path.normpath(args.data_root)), "category_embeddings.pt")
+    # category_embeddings_path = os.path.join(args.category_embeddings_base_dir, "category_embeddings", os.path.basename(os.path.normpath(args.data_root)), "category_embeddings.pt")
+    category_embeddings_path = os.path.join(args.category_embeddings_base_dir, "category_embeddings", os.path.basename(os.path.normpath(args.data_root_for_data)), "category_embeddings.pt")
 
     # Save ProteinSAM initialization parameters to JSON file
     protein_sam_init_params = {

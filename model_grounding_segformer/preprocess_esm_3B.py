@@ -113,16 +113,26 @@ def encode_sequences_with_esm(
     Returns:
         Number of sequences encoded
     """
+    encoded_count = 0
+
+    pending_items = [
+        (uid, seq)
+        for uid, seq in sequences.items()
+        if not os.path.exists(os.path.join(output_dir, f"{uid}.pt"))
+    ]
+
+    if not pending_items:
+        return encoded_count
+
     print("Loading ESM model...")
     model = EsmModel.from_pretrained(esm_model_path).to(device)
     tokenizer = EsmTokenizer.from_pretrained(esm_model_path)
 
     model.eval()
-    encoded_count = 0
 
     # Convert to list for batch processing
-    uid_list = list(sequences.keys())
-    seq_list = list(sequences.values())
+    uid_list = [uid for uid, _ in pending_items]
+    seq_list = [seq for _, seq in pending_items]
 
     print(f"Encoding {len(seq_list)} sequences...")
 
@@ -187,8 +197,12 @@ def build_output_dir(base_dir: str, esm_model_path: str, data_root: str) -> str:
 def main():
     parser = argparse.ArgumentParser(description="Preprocess ESM embeddings for ProteinSAM")
 
-    parser.add_argument("--data_root", type=str, default="../data_70",
+    # parser.add_argument("--data_root", type=str, default="../data_70",
+                    #    help="Root directory for datasets")
+    parser.add_argument("--data_root", type=str, default="../data_30",
                        help="Root directory for datasets")
+    parser.add_argument("--data_root_for_data", type=str, default="../data_70",
+                       help="为了切换data_30时不在重新编码一遍全数据集，故用这个字段将esm embedding的输出目录命名为data_70")
     parser.add_argument("--data_name", type=str,
                        default="VenusX_Dom||VenusX_Act||VenusX_BindI||VenusX_Motif||VenusX_Evo",
                        help="Dataset name(s), supports || separator for multiple datasets")
@@ -207,7 +221,7 @@ def main():
     args = parser.parse_args()
 
     # Auto-derive output directory from model and data names
-    output_dir = build_output_dir(args.output_base_dir, args.esm_model_path, args.data_root)
+    output_dir = build_output_dir(args.output_base_dir, args.esm_model_path, args.data_root_for_data)
     os.makedirs(output_dir, exist_ok=True)
 
     print("=== ESM Embedding Preprocessing for ProteinSAM ===")

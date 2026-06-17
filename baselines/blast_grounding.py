@@ -308,7 +308,7 @@ def main():
     parser.add_argument("--task", type=str, default='single',
                        choices=['single', 'multiple', 'both'],
                        help="Task type: single localization, multiple localization, or both")
-    parser.add_argument("--output_dir", type=str, default=os.path.join(project_root, "baselines", "blast_cls_results"),
+    parser.add_argument("--output_dir", type=str, default=os.path.join(project_root, "baselines", "blast_grounding_results"),
                        help="Output directory for results")
     # parser.add_argument("--identity_threshold", type=float, default=50.0,
     #                    help="Minimum identity percentage for BLAST hits")
