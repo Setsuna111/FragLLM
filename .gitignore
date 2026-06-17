@@ -12,9 +12,9 @@ scripts/*bug.sh
 scripts_legacy/
 test_lfj.ipynb
 merge_*_lfj.py
-eval/*_lfj.*
 baselines/*_results/
 baselines/prot2text
+baselines/*_old/
 model_grounding_cls/*.log
 model_grounding_cls/category_embeddings.pt
 model_grounding_cls/dataset_predictions.json

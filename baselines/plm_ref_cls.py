@@ -5,6 +5,8 @@ import sys
 # Add project root to path for imports
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, project_root)
+import math
+from collections import Counter
 import pandas as pd
 import argparse
 import json
@@ -12,11 +14,6 @@ import numpy as np
 import torch
 from tqdm import tqdm
 from transformers import AutoModel, AutoTokenizer
-from sklearn.metrics import (
-    accuracy_score,
-    matthews_corrcoef,
-    precision_recall_fscore_support,
-)
 from sklearn.metrics.pairwise import cosine_similarity
 import warnings
 warnings.filterwarnings('ignore')
@@ -211,9 +208,15 @@ def get_base_out_dir(out_dir, model_name, data_dir_name):
         return os.path.join(out_dir, model_name)
     return os.path.join(out_dir, model_name, data_dir_name)
 
-def compute_classification_metrics(results, label_to_idx):
-    """Compute multiclass metrics over the global InterPro label space."""
+def compute_classification_metrics(results, label_to_idx=None):
+    """Compute multiclass metrics without a dense confusion matrix.
+
+    The main macro precision/recall/f1 fields are averaged over labels that
+    appear as true labels in the current test set. Stricter observed/global
+    macro metrics are also saved for interpretation.
+    """
     if not results:
+        global_num_classes = len(label_to_idx) if label_to_idx is not None else 0
         return {
             'acc': 0.0,
             'recall': 0.0,
@@ -222,31 +225,98 @@ def compute_classification_metrics(results, label_to_idx):
             'mcc': 0.0,
             'total': 0,
             'correct': 0,
-            'num_classes': len(label_to_idx),
+            'num_classes': 0,
+            'macro_average': 'test_true_labels',
+            'observed_precision': 0.0,
+            'observed_recall': 0.0,
+            'observed_f1': 0.0,
+            'observed_num_classes': 0,
+            'global_precision': 0.0,
+            'global_recall': 0.0,
+            'global_f1': 0.0,
+            'global_num_classes': global_num_classes,
         }
 
-    true_idx = [label_to_idx[r['true_interpro_id']] for r in results]
-    pred_idx = [label_to_idx[r['predicted_interpro_id']] for r in results]
-    label_indices = list(range(len(label_to_idx)))
-
-    precision, recall, f1, _ = precision_recall_fscore_support(
-        true_idx,
-        pred_idx,
-        labels=label_indices,
-        average='macro',
-        zero_division=0,
+    true_labels = [r['true_interpro_id'] for r in results]
+    pred_labels = [r['predicted_interpro_id'] for r in results]
+    true_count = Counter(true_labels)
+    pred_count = Counter(pred_labels)
+    tp_count = Counter(
+        true_label
+        for true_label, pred_label in zip(true_labels, pred_labels)
+        if true_label == pred_label
     )
-    correct = sum(1 for true_label, pred_label in zip(true_idx, pred_idx) if true_label == pred_label)
+
+    total = len(results)
+    correct = sum(tp_count.values())
+    accuracy = correct / total
+
+    def macro_scores(labels):
+        labels = list(labels)
+        if not labels:
+            return 0.0, 0.0, 0.0, 0
+
+        precisions = []
+        recalls = []
+        f1_scores = []
+        for label in labels:
+            tp = tp_count[label]
+            precision = tp / pred_count[label] if pred_count[label] > 0 else 0.0
+            recall = tp / true_count[label] if true_count[label] > 0 else 0.0
+            f1 = 2 * precision * recall / (precision + recall) if precision + recall > 0 else 0.0
+
+            precisions.append(precision)
+            recalls.append(recall)
+            f1_scores.append(f1)
+
+        return (
+            sum(precisions) / len(labels),
+            sum(recalls) / len(labels),
+            sum(f1_scores) / len(labels),
+            len(labels),
+        )
+
+    true_label_set = sorted(true_count)
+    observed_label_set = sorted(set(true_count) | set(pred_count))
+    if label_to_idx is None:
+        global_label_set = observed_label_set
+    else:
+        global_label_set = sorted(set(label_to_idx) | set(true_count) | set(pred_count))
+
+    precision, recall, f1, num_classes = macro_scores(true_label_set)
+    observed_precision, observed_recall, observed_f1, observed_num_classes = macro_scores(
+        observed_label_set
+    )
+    global_precision, global_recall, global_f1, global_num_classes = macro_scores(
+        global_label_set
+    )
+
+    active_labels = set(true_count) | set(pred_count)
+    sum_row_col = sum(true_count[label] * pred_count[label] for label in active_labels)
+    numerator = correct * total - sum_row_col
+    denominator_left = total * total - sum(value * value for value in true_count.values())
+    denominator_right = total * total - sum(value * value for value in pred_count.values())
+    denominator = math.sqrt(denominator_left * denominator_right)
+    mcc = numerator / denominator if denominator > 0 else 0.0
 
     return {
-        'acc': float(accuracy_score(true_idx, pred_idx)),
-        'recall': float(recall),
-        'precision': float(precision),
-        'f1': float(f1),
-        'mcc': float(matthews_corrcoef(true_idx, pred_idx)),
-        'total': len(results),
-        'correct': int(correct),
-        'num_classes': len(label_to_idx),
+        'acc': accuracy,
+        'recall': recall,
+        'precision': precision,
+        'f1': f1,
+        'mcc': mcc,
+        'total': total,
+        'correct': correct,
+        'num_classes': num_classes,
+        'macro_average': 'test_true_labels',
+        'observed_precision': observed_precision,
+        'observed_recall': observed_recall,
+        'observed_f1': observed_f1,
+        'observed_num_classes': observed_num_classes,
+        'global_precision': global_precision,
+        'global_recall': global_recall,
+        'global_f1': global_f1,
+        'global_num_classes': global_num_classes,
     }
 
 def main(model_path, batch_size, out_dir, use_cuda, data_dir="data", eval_datasets=None):
@@ -440,10 +510,10 @@ if __name__ == "__main__":
                        help="Path to protein language model (ESM2, ProtBERT, etc.)")
     parser.add_argument("--batch_size", type=int, default=16, 
                        help="Batch size for encoding sequences")
-    parser.add_argument("--out_dir", type=str, default=os.path.join(project_root, "baselines", "plm_results"), 
+    parser.add_argument("--out_dir", type=str, default=os.path.join(project_root, "baselines", "plm_ref_cls_results"), 
                        help="Output directory")
-    parser.add_argument("--data_dir", type=str, default="data_70",
-                       help="Dataset root directory, e.g. data, data_70, data_30, or an absolute path")
+    parser.add_argument("--data_dir", type=str, default="data_70", help="Dataset root directory")
+    # parser.add_argument("--data_dir", type=str, default="data_30", help="Dataset root directory")
     parser.add_argument("--cpu", default=False, action="store_true", 
                        help="Force CPU usage (default: use CUDA if available)")
     

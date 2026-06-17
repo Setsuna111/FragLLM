@@ -1,10 +1,11 @@
+import os
+os.environ["CUDA_VISIBLE_DEVICES"] = "3"
 import torch
 import torch.nn.functional as F
 import pandas as pd
 import numpy as np
 import json
 import pickle
-import os
 import evaluate
 from typing import Optional, Union, List, Dict, Any
 from sentence_transformers import SentenceTransformer
@@ -32,12 +33,12 @@ argParser = argparse.ArgumentParser()
 #         cache_dir="/home/lfj/projects_dir/FragLLM/eval/cache",
 #         batch_size=16
 #     )
-argParser.add_argument("--embedding_model", type=str, default="/home/lfj/projects_dir/pretrained_model/Qwen3-Embedding-0.6B", help="path to BLAST classification results CSV file")
-argParser.add_argument("--interpro_db_path", type=str, default="/home/lfj/projects_dir/FragLLM/data/new_interpro_metadata_short_with_fragment_type_v3.json", help="path to BLAST classification results CSV file")
-argParser.add_argument("--cache_dir", type=str, default="/home/lfj/projects_dir/FragLLM/eval/cache", help="path to BLAST classification results CSV file")
+argParser.add_argument("--embedding_model", type=str, default="/home/dataset-local/projects_dir/pretrained_model/Qwen3-Embedding-0.6B/", help="path to BLAST classification results CSV file")
+argParser.add_argument("--interpro_db_path", type=str, default="/home/dataset-local/projects_dir/VenusX_dataset/final_interpro_metadata.json", help="path to BLAST classification results CSV file")
+argParser.add_argument("--cache_dir", type=str, default="/home/dataset-local/projects_dir/FragLLM/eval/cache/", help="path to BLAST classification results CSV file")
 argParser.add_argument("--batch_size", type=int, default=16, help="path to BLAST classification results CSV file")
 argParser.add_argument("--bert_model_type", type=str, default="/home/dataset-local/projects/Data/HF_models/biobert-large-cased-v1.1", help="path to BLAST classification results CSV file")
-argParser.add_argument("--results_path", type=str, help="path to BLAST classification results CSV file")
+argParser.add_argument("--results_path", default="/home/dataset-local/projects_dir/FragLLM/eval_results/referring_cls/0529_all_123500/ActRefClass_results.csv", type=str, help="path to BLAST classification results CSV file")
 args = argParser.parse_args()
 class ClsMetrics:
     """
@@ -49,35 +50,81 @@ class ClsMetrics:
         super().__init__()
         self.num_labels = num_labels
         self.device = device
-        
-        self.metrics_dict = {
-            'acc': Accuracy(task="multiclass", num_classes=num_labels).to(device),
-            'recall': Recall(task="multiclass", num_classes=num_labels, average='macro').to(device),
-            'precision': Precision(task="multiclass", num_classes=num_labels, average='macro').to(device),
-            'f1': F1Score(task="multiclass", num_classes=num_labels, average='macro').to(device),
-            'mcc': MatthewsCorrCoef(task="multiclass", num_classes=num_labels).to(device),
-        }
+        self.reset()
     
     def update(self, pred, target):
 
         pred, target = pred.to(self.device), target.to(self.device)
-
-        for metric in self.metrics_dict.values():
-            metric.update(pred, target)
+        self.pred_batches.append(pred.detach())
+        self.target_batches.append(target.detach())
 
     def reset(self):
 
-        for metric in self.metrics_dict.values():
-            metric.reset()
+        self.pred_batches = []
+        self.target_batches = []
     
     def compute(self):
-        
-        results = {}
+        if not self.pred_batches:
+            zero = torch.tensor(0.0, device=self.device)
+            return {
+                'acc': zero,
+                'recall': zero,
+                'precision': zero,
+                'f1': zero,
+                'mcc': zero,
+            }
 
-        for name, metric in self.metrics_dict.items():
-            results[name] = metric.compute()
+        pred = torch.cat(self.pred_batches)
+        target = torch.cat(self.target_batches)
+        total = target.numel()
+        correct = (pred == target).sum()
+        acc = correct.float() / total if total > 0 else torch.tensor(0.0, device=self.device)
 
-        return results
+        true_labels = torch.unique(target)
+        precisions = []
+        recalls = []
+        f1_scores = []
+
+        for label in true_labels:
+            pred_is_label = pred == label
+            target_is_label = target == label
+            tp = (pred_is_label & target_is_label).sum().float()
+            pred_count = pred_is_label.sum().float()
+            true_count = target_is_label.sum().float()
+
+            precision = tp / pred_count if pred_count > 0 else torch.tensor(0.0, device=self.device)
+            recall = tp / true_count if true_count > 0 else torch.tensor(0.0, device=self.device)
+            f1 = (
+                2 * precision * recall / (precision + recall)
+                if precision + recall > 0
+                else torch.tensor(0.0, device=self.device)
+            )
+
+            precisions.append(precision)
+            recalls.append(recall)
+            f1_scores.append(f1)
+
+        precision = torch.stack(precisions).mean() if precisions else torch.tensor(0.0, device=self.device)
+        recall = torch.stack(recalls).mean() if recalls else torch.tensor(0.0, device=self.device)
+        f1 = torch.stack(f1_scores).mean() if f1_scores else torch.tensor(0.0, device=self.device)
+
+        pred_count = torch.bincount(pred, minlength=self.num_labels).float()
+        true_count = torch.bincount(target, minlength=self.num_labels).float()
+        sum_row_col = (pred_count * true_count).sum()
+        total_float = torch.tensor(float(total), device=self.device)
+        numerator = correct.float() * total_float - sum_row_col
+        denominator_left = total_float * total_float - (true_count * true_count).sum()
+        denominator_right = total_float * total_float - (pred_count * pred_count).sum()
+        denominator = torch.sqrt(denominator_left * denominator_right)
+        mcc = numerator / denominator if denominator > 0 else torch.tensor(0.0, device=self.device)
+
+        return {
+            'acc': acc,
+            'recall': recall,
+            'precision': precision,
+            'f1': f1,
+            'mcc': mcc,
+        }
     
 
 class LanguageMetrics:
@@ -171,7 +218,7 @@ class ReferenceMetrics:
         )
         
         # Initialize language metrics
-        self.lang_metrics = LanguageMetrics(device=device, bert_model_type=bert_model_type)
+        # self.lang_metrics = LanguageMetrics(device=device, bert_model_type=bert_model_type)
         
         # Track what type of data has been added
         self.has_labels = False
@@ -205,7 +252,7 @@ class ReferenceMetrics:
     def _get_cache_path(self):
         """Get cache file path for label embeddings."""
         os.makedirs(self.cache_dir, exist_ok=True)
-        model_name = self.embedding_model_name.replace('/', '_').replace('\\', '_')
+        model_name = self.embedding_model_name.replace('/', '_').replace('\\', '_')[1: -1]
         cache_filename = f"interpro_embeddings_{model_name}.pkl"
         return os.path.join(self.cache_dir, cache_filename)
     
@@ -477,9 +524,9 @@ class ReferenceMetrics:
             self.has_labels = True
             
         # Language metrics (when both pred_texts and target_texts are provided)
-        if pred_texts is not None and target_texts is not None:
-            self.lang_metrics.update(pred_texts, target_texts)
-            self.has_texts = True
+        # if pred_texts is not None and target_texts is not None:
+        #     self.lang_metrics.update(pred_texts, target_texts)
+        #     self.has_texts = True
         
         # Validation: ensure at least one type of data is provided
         if not self.has_labels and not self.has_texts:
@@ -488,7 +535,7 @@ class ReferenceMetrics:
     def reset(self):
         """Reset all metrics."""
         self.cls_metrics.reset()
-        self.lang_metrics.reset()
+        # self.lang_metrics.reset()
         self.has_labels = False
         self.has_texts = False
     
@@ -508,10 +555,10 @@ class ReferenceMetrics:
                 results[f'cls_{key}'] = value
         
         # Compute language metrics if texts were provided
-        if self.has_texts:
-            lang_results = self.lang_metrics.compute()
-            for key, value in lang_results.items():
-                results[f'lang_{key}'] = value
+        # if self.has_texts:
+        #     lang_results = self.lang_metrics.compute()
+        #     for key, value in lang_results.items():
+        #         results[f'lang_{key}'] = value
         
         return results
 
@@ -612,7 +659,10 @@ if __name__ == "__main__":
         target_text_col='reference',
         target_interpro_id_col='interpro_ids'
     )
-    print(results)
+    # print(results)
+    for key, value in results.items():
+        print(f"{key}: {value}")
+    print("✓ Comprehensive evaluation from CSV with both retrieval-based classification and language metrics\n")
     
     # CSV Example 2: InterPro retrieval only
     print("# InterPro retrieval only:")

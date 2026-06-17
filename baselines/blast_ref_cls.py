@@ -12,7 +12,14 @@ import pandas as pd
 import argparse
 import json
 import math
+from collections import Counter
 from tqdm import tqdm
+
+DATASET_NAMES = ["Act", "BindI", "Dom", "Evo", "Motif"]
+
+def get_data_dir_name(data_dir):
+    """Get a stable name for separating output/cache directories."""
+    return os.path.basename(os.path.normpath(data_dir))
 
 def load_venusx_dataset(dataset_name, split, data_dir):
     """Load VenusX dataset from JSON file"""
@@ -25,7 +32,7 @@ def load_venusx_dataset(dataset_name, split, data_dir):
     
     return data
 
-def extract_fragments_to_fasta(data, output_fasta, interpro_index_file):
+def extract_fragments_to_fasta(data, output_fasta, interpro_index_file, dataset_name=None):
     """Extract fragment sequences and create FASTA file with interpro_id indexing"""
     fragments = []
     interpro_index = {}
@@ -36,6 +43,8 @@ def extract_fragments_to_fasta(data, output_fasta, interpro_index_file):
             interpro_id = fragment_group['interpro_id']
             for i, frag in enumerate(fragment_group['frags']):
                 frag_id = f"{uid}_{interpro_id}_{i}"
+                if dataset_name is not None:
+                    frag_id = f"{dataset_name}:{frag_id}"
                 frag_seq = frag['sequence']
                 fragments.append((frag_id, frag_seq))
                 interpro_index[frag_id] = interpro_id
@@ -53,6 +62,53 @@ def extract_fragments_to_fasta(data, output_fasta, interpro_index_file):
     print(f"Saved interpro index to {interpro_index_file}")
     
     return fragments, interpro_index
+
+def load_combined_train_fragments(dataset_names, data_dir):
+    """Load and concatenate train fragments from all VenusX datasets."""
+    all_fragments = []
+    all_interpro_index = {}
+    global_labels = set()
+
+    for dataset_name in dataset_names:
+        train_data = load_venusx_dataset(dataset_name, "train", data_dir)
+        fragments = []
+
+        for protein in train_data:
+            uid = protein['uid']
+            for fragment_group in protein['fragments']:
+                interpro_id = fragment_group['interpro_id']
+                global_labels.add(interpro_id)
+                for i, frag in enumerate(fragment_group['frags']):
+                    frag_id = f"{dataset_name}:{uid}_{interpro_id}_{i}"
+                    fragments.append((frag_id, frag['sequence']))
+                    all_interpro_index[frag_id] = interpro_id
+
+        all_fragments.extend(fragments)
+        print(f"VenusX_{dataset_name}: train fragments={len(fragments)}")
+
+    return all_fragments, all_interpro_index, global_labels
+
+def collect_interpro_labels(dataset_names, split, data_dir):
+    """Collect InterPro labels from a split across VenusX datasets."""
+    labels = set()
+    for dataset_name in dataset_names:
+        data = load_venusx_dataset(dataset_name, split, data_dir)
+        for protein in data:
+            for fragment_group in protein['fragments']:
+                labels.add(fragment_group['interpro_id'])
+    return labels
+
+def write_fragments_to_fasta(fragments, output_fasta, interpro_index, interpro_index_file):
+    """Write pre-extracted fragments and their InterPro index."""
+    with open(output_fasta, 'w') as f:
+        for frag_id, seq in fragments:
+            f.write(f">{frag_id}\n{seq}\n")
+
+    with open(interpro_index_file, 'w') as f:
+        json.dump(interpro_index, f, indent=2)
+
+    print(f"Extracted {len(fragments)} fragments to {output_fasta}")
+    print(f"Saved interpro index to {interpro_index_file}")
 
 def run_makeblastdb(fasta_file, db_name):
     """Create BLAST database from FASTA file"""
@@ -134,9 +190,15 @@ def parse_blast_results(blast_output, train_interpro_index, test_interpro_index)
     
     return predictions
 
-def compute_classification_metrics(predictions):
-    """Compute multiclass classification metrics for InterPro ID predictions."""
+def compute_classification_metrics(predictions, label_to_idx=None):
+    """Compute multiclass metrics without a dense confusion matrix.
+
+    The main macro precision/recall/f1 fields are averaged over labels that
+    appear as true labels in the current test set. Stricter observed/global
+    macro metrics are also saved for interpretation.
+    """
     if not predictions:
+        global_num_classes = len(label_to_idx) if label_to_idx is not None else 0
         return {
             'acc': 0.0,
             'recall': 0.0,
@@ -146,87 +208,140 @@ def compute_classification_metrics(predictions):
             'total': 0,
             'correct': 0,
             'num_classes': 0,
+            'macro_average': 'test_true_labels',
+            'observed_precision': 0.0,
+            'observed_recall': 0.0,
+            'observed_f1': 0.0,
+            'observed_num_classes': 0,
+            'global_precision': 0.0,
+            'global_recall': 0.0,
+            'global_f1': 0.0,
+            'global_num_classes': global_num_classes,
         }
 
     true_labels = [p['true_interpro_id'] for p in predictions]
     pred_labels = [p['predicted_interpro_id'] for p in predictions]
-    labels = sorted(set(true_labels) | set(pred_labels))
-    label_to_idx = {label: idx for idx, label in enumerate(labels)}
-    num_classes = len(labels)
-
-    confusion = [[0 for _ in range(num_classes)] for _ in range(num_classes)]
-    for true_label, pred_label in zip(true_labels, pred_labels):
-        true_idx = label_to_idx[true_label]
-        pred_idx = label_to_idx[pred_label]
-        confusion[true_idx][pred_idx] += 1
+    true_count = Counter(true_labels)
+    pred_count = Counter(pred_labels)
+    tp_count = Counter(
+        true_label
+        for true_label, pred_label in zip(true_labels, pred_labels)
+        if true_label == pred_label
+    )
 
     total = len(predictions)
-    correct = sum(confusion[i][i] for i in range(num_classes))
+    correct = sum(tp_count.values())
     accuracy = correct / total
 
-    precisions = []
-    recalls = []
-    f1_scores = []
-    for idx in range(num_classes):
-        tp = confusion[idx][idx]
-        pred_count = sum(confusion[row][idx] for row in range(num_classes))
-        true_count = sum(confusion[idx][col] for col in range(num_classes))
+    def macro_scores(labels):
+        labels = list(labels)
+        if not labels:
+            return 0.0, 0.0, 0.0, 0
 
-        precision = tp / pred_count if pred_count > 0 else 0.0
-        recall = tp / true_count if true_count > 0 else 0.0
-        f1 = 2 * precision * recall / (precision + recall) if precision + recall > 0 else 0.0
+        precisions = []
+        recalls = []
+        f1_scores = []
+        for label in labels:
+            tp = tp_count[label]
+            precision = tp / pred_count[label] if pred_count[label] > 0 else 0.0
+            recall = tp / true_count[label] if true_count[label] > 0 else 0.0
+            f1 = 2 * precision * recall / (precision + recall) if precision + recall > 0 else 0.0
 
-        precisions.append(precision)
-        recalls.append(recall)
-        f1_scores.append(f1)
+            precisions.append(precision)
+            recalls.append(recall)
+            f1_scores.append(f1)
 
-    row_sums = [sum(confusion[row][col] for col in range(num_classes)) for row in range(num_classes)]
-    col_sums = [sum(confusion[row][col] for row in range(num_classes)) for col in range(num_classes)]
-    sum_row_col = sum(row_sums[idx] * col_sums[idx] for idx in range(num_classes))
+        return (
+            sum(precisions) / len(labels),
+            sum(recalls) / len(labels),
+            sum(f1_scores) / len(labels),
+            len(labels),
+        )
+
+    true_label_set = sorted(true_count)
+    observed_label_set = sorted(set(true_count) | set(pred_count))
+    if label_to_idx is None:
+        global_label_set = observed_label_set
+    else:
+        global_label_set = sorted(set(label_to_idx) | set(true_count) | set(pred_count))
+
+    precision, recall, f1, num_classes = macro_scores(true_label_set)
+    observed_precision, observed_recall, observed_f1, observed_num_classes = macro_scores(
+        observed_label_set
+    )
+    global_precision, global_recall, global_f1, global_num_classes = macro_scores(
+        global_label_set
+    )
+
+    active_labels = set(true_count) | set(pred_count)
+    sum_row_col = sum(true_count[label] * pred_count[label] for label in active_labels)
     numerator = correct * total - sum_row_col
-    denominator_left = total * total - sum(value * value for value in row_sums)
-    denominator_right = total * total - sum(value * value for value in col_sums)
+    denominator_left = total * total - sum(value * value for value in true_count.values())
+    denominator_right = total * total - sum(value * value for value in pred_count.values())
     denominator = math.sqrt(denominator_left * denominator_right)
     mcc = numerator / denominator if denominator > 0 else 0.0
 
     return {
         'acc': accuracy,
-        'recall': sum(recalls) / num_classes,
-        'precision': sum(precisions) / num_classes,
-        'f1': sum(f1_scores) / num_classes,
+        'recall': recall,
+        'precision': precision,
+        'f1': f1,
         'mcc': mcc,
         'total': total,
         'correct': correct,
         'num_classes': num_classes,
+        'macro_average': 'test_true_labels',
+        'observed_precision': observed_precision,
+        'observed_recall': observed_recall,
+        'observed_f1': observed_f1,
+        'observed_num_classes': observed_num_classes,
+        'global_precision': global_precision,
+        'global_recall': global_recall,
+        'global_f1': global_f1,
+        'global_num_classes': global_num_classes,
     }
 
 def main(dataset_name, num_threads, out_dir, data_dir):
     """Main function for VenusX BLAST analysis"""
     print(f"[*] Processing VenusX_{dataset_name} dataset...")
+    print(f"Training datasets: {', '.join(DATASET_NAMES)}")
     
     # Create output directory
-    dataset_out_dir = os.path.join(out_dir, f"VenusX_{dataset_name}_{data_dir}")
+    data_dir_name = get_data_dir_name(data_dir)
+    dataset_out_dir = os.path.join(out_dir, f"VenusX_{dataset_name}_{data_dir_name}_all_train")
     os.makedirs(dataset_out_dir, exist_ok=True)
     
     # Step 1: Load datasets and extract fragments
     print("[1] Loading datasets and extracting fragments...")
     
-    train_data = load_venusx_dataset(dataset_name, "train", data_dir)
+    train_fragments, train_interpro_index, global_labels = load_combined_train_fragments(
+        DATASET_NAMES, data_dir
+    )
     test_data = load_venusx_dataset(dataset_name, "test", data_dir)
     
-    # Extract train fragments
+    # Extract train fragments from the union of all training datasets
     train_fasta = os.path.join(dataset_out_dir, "train_fragments.fasta")
     train_index_file = os.path.join(dataset_out_dir, "train_interpro_index.json")
-    train_fragments, train_interpro_index = extract_fragments_to_fasta(
-        train_data, train_fasta, train_index_file
+    write_fragments_to_fasta(
+        train_fragments, train_fasta, train_interpro_index, train_index_file
     )
     
     # Extract test fragments
     test_fasta = os.path.join(dataset_out_dir, "test_fragments.fasta")
     test_index_file = os.path.join(dataset_out_dir, "test_interpro_index.json")
     test_fragments, test_interpro_index = extract_fragments_to_fasta(
-        test_data, test_fasta, test_index_file
+        test_data, test_fasta, test_index_file, dataset_name
     )
+
+    global_labels.update(collect_interpro_labels(DATASET_NAMES, "test", data_dir))
+    label_to_idx = {label: idx for idx, label in enumerate(sorted(global_labels))}
+    label_index_file = os.path.join(dataset_out_dir, "blast_label_to_idx.json")
+    with open(label_index_file, 'w') as f:
+        json.dump(label_to_idx, f, indent=2)
+
+    print(f"Combined train fragments: {len(train_fragments)}")
+    print(f"Global label count: {len(label_to_idx)}")
+    print(f"Label index saved to {label_index_file}")
     
     # Step 2: Build BLAST database from train fragments
     print("[2] Building BLAST database from train fragments...")
@@ -249,6 +364,8 @@ def main(dataset_name, num_threads, out_dir, data_dir):
     # Step 5: Save results to CSV
     print("[5] Saving results to CSV...")
     results_df = pd.DataFrame(predictions)
+    results_df['true_label_idx'] = results_df['true_interpro_id'].map(label_to_idx)
+    results_df['predicted_label_idx'] = results_df['predicted_interpro_id'].map(label_to_idx)
     csv_output = os.path.join(dataset_out_dir, "blast_predictions.csv")
     results_df.to_csv(csv_output, index=False)
     
@@ -256,32 +373,61 @@ def main(dataset_name, num_threads, out_dir, data_dir):
     print(f"[✓] Total predictions: {len(predictions)}")
     
     # Calculate classification metrics
-    metrics = compute_classification_metrics(predictions)
+    metrics = compute_classification_metrics(predictions, label_to_idx)
     metrics_output = os.path.join(dataset_out_dir, "blast_metrics.json")
     with open(metrics_output, 'w') as f:
         json.dump(metrics, f, indent=2)
 
+    metadata = {
+        'dataset_name': dataset_name,
+        'train_datasets': DATASET_NAMES,
+        'data_dir': data_dir,
+        'num_train_fragments': len(train_fragments),
+        'num_test_fragments': len(test_fragments),
+        'num_global_labels': len(label_to_idx),
+        'metrics': metrics,
+    }
+    metadata_output = os.path.join(dataset_out_dir, "blast_metadata.json")
+    with open(metadata_output, 'w') as f:
+        json.dump(metadata, f, indent=2)
+
     print(f"[✓] Accuracy: {metrics['acc']:.4f} ({metrics['correct']}/{metrics['total']})")
+    print(f"[✓] Macro average: {metrics['macro_average']} ({metrics['num_classes']} classes)")
     print(f"[✓] Recall: {metrics['recall']:.4f}")
     print(f"[✓] Precision: {metrics['precision']:.4f}")
     print(f"[✓] F1: {metrics['f1']:.4f}")
+    print(f"[✓] Observed-label F1: {metrics['observed_f1']:.4f} ({metrics['observed_num_classes']} classes)")
+    print(f"[✓] Global-label F1: {metrics['global_f1']:.4f} ({metrics['global_num_classes']} classes)")
     print(f"[✓] MCC: {metrics['mcc']:.4f}")
     print(f"[✓] Metrics saved to {metrics_output}")
+    print(f"[✓] Metadata saved to {metadata_output}")
     
     # Clean up database files
     os.system(f"rm -rf {db_name}*")
     
     return csv_output
 
+def run_evaluations(eval_datasets, num_threads, out_dir, data_dir):
+    """Run BLAST analysis for one or more VenusX test datasets."""
+    csv_outputs = {}
+    print(f"Evaluation datasets: {', '.join(eval_datasets)}")
+
+    for dataset_name in eval_datasets:
+        csv_outputs[dataset_name] = main(dataset_name, num_threads, out_dir, data_dir)
+
+    return csv_outputs
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="BLAST analysis for VenusX protein fragments")
-    parser.add_argument("--data_dir", default="data_70", help="VenusX dataset to analyze")
+    parser.add_argument("--data_dir", default="data_70", help="Dataset root directory, e.g. data, data_70, data_30, or an absolute path")
     # parser.add_argument("--data_dir", default="data_30", help="VenusX dataset to analyze")
-    parser.add_argument("--dataset", default="Act",choices=["Act", "BindI", "Dom", "Evo", "Motif"], help="VenusX dataset to analyze")
+    parser.add_argument("--dataset", default=None, choices=DATASET_NAMES, help="Evaluate one VenusX test dataset. Training always uses all datasets.")
+    parser.add_argument("--datasets", nargs="+", choices=DATASET_NAMES, default=DATASET_NAMES, help="VenusX test datasets to evaluate. Training always uses all datasets.")
     parser.add_argument("--num_threads", type=int, default=4, help="Number of threads for BLAST")
     parser.add_argument("--out_dir", type=str, default=os.path.join(project_root, "baselines", "blast_ref_cls_results"), help="Output directory")
     
     args = parser.parse_args()
     
     os.makedirs(args.out_dir, exist_ok=True)
-    main(args.dataset, args.num_threads, args.out_dir, args.data_dir)
+    eval_datasets = [args.dataset] if args.dataset is not None else args.datasets
+    run_evaluations(eval_datasets, args.num_threads, args.out_dir, args.data_dir)
