@@ -11,6 +11,7 @@ import subprocess
 import pandas as pd
 import argparse
 import json
+import math
 from tqdm import tqdm
 
 def load_venusx_dataset(dataset_name, split, data_dir):
@@ -133,6 +134,72 @@ def parse_blast_results(blast_output, train_interpro_index, test_interpro_index)
     
     return predictions
 
+def compute_classification_metrics(predictions):
+    """Compute multiclass classification metrics for InterPro ID predictions."""
+    if not predictions:
+        return {
+            'acc': 0.0,
+            'recall': 0.0,
+            'precision': 0.0,
+            'f1': 0.0,
+            'mcc': 0.0,
+            'total': 0,
+            'correct': 0,
+            'num_classes': 0,
+        }
+
+    true_labels = [p['true_interpro_id'] for p in predictions]
+    pred_labels = [p['predicted_interpro_id'] for p in predictions]
+    labels = sorted(set(true_labels) | set(pred_labels))
+    label_to_idx = {label: idx for idx, label in enumerate(labels)}
+    num_classes = len(labels)
+
+    confusion = [[0 for _ in range(num_classes)] for _ in range(num_classes)]
+    for true_label, pred_label in zip(true_labels, pred_labels):
+        true_idx = label_to_idx[true_label]
+        pred_idx = label_to_idx[pred_label]
+        confusion[true_idx][pred_idx] += 1
+
+    total = len(predictions)
+    correct = sum(confusion[i][i] for i in range(num_classes))
+    accuracy = correct / total
+
+    precisions = []
+    recalls = []
+    f1_scores = []
+    for idx in range(num_classes):
+        tp = confusion[idx][idx]
+        pred_count = sum(confusion[row][idx] for row in range(num_classes))
+        true_count = sum(confusion[idx][col] for col in range(num_classes))
+
+        precision = tp / pred_count if pred_count > 0 else 0.0
+        recall = tp / true_count if true_count > 0 else 0.0
+        f1 = 2 * precision * recall / (precision + recall) if precision + recall > 0 else 0.0
+
+        precisions.append(precision)
+        recalls.append(recall)
+        f1_scores.append(f1)
+
+    row_sums = [sum(confusion[row][col] for col in range(num_classes)) for row in range(num_classes)]
+    col_sums = [sum(confusion[row][col] for row in range(num_classes)) for col in range(num_classes)]
+    sum_row_col = sum(row_sums[idx] * col_sums[idx] for idx in range(num_classes))
+    numerator = correct * total - sum_row_col
+    denominator_left = total * total - sum(value * value for value in row_sums)
+    denominator_right = total * total - sum(value * value for value in col_sums)
+    denominator = math.sqrt(denominator_left * denominator_right)
+    mcc = numerator / denominator if denominator > 0 else 0.0
+
+    return {
+        'acc': accuracy,
+        'recall': sum(recalls) / num_classes,
+        'precision': sum(precisions) / num_classes,
+        'f1': sum(f1_scores) / num_classes,
+        'mcc': mcc,
+        'total': total,
+        'correct': correct,
+        'num_classes': num_classes,
+    }
+
 def main(dataset_name, num_threads, out_dir, data_dir):
     """Main function for VenusX BLAST analysis"""
     print(f"[*] Processing VenusX_{dataset_name} dataset...")
@@ -188,11 +255,18 @@ def main(dataset_name, num_threads, out_dir, data_dir):
     print(f"[✓] Results saved to {csv_output}")
     print(f"[✓] Total predictions: {len(predictions)}")
     
-    # Calculate accuracy (simply)
-    if len(predictions) > 0:
-        correct = sum(1 for p in predictions if p['true_interpro_id'] == p['predicted_interpro_id'])
-        accuracy = correct / len(predictions)
-        print(f"[✓] Accuracy: {accuracy:.4f} ({correct}/{len(predictions)})")
+    # Calculate classification metrics
+    metrics = compute_classification_metrics(predictions)
+    metrics_output = os.path.join(dataset_out_dir, "blast_metrics.json")
+    with open(metrics_output, 'w') as f:
+        json.dump(metrics, f, indent=2)
+
+    print(f"[✓] Accuracy: {metrics['acc']:.4f} ({metrics['correct']}/{metrics['total']})")
+    print(f"[✓] Recall: {metrics['recall']:.4f}")
+    print(f"[✓] Precision: {metrics['precision']:.4f}")
+    print(f"[✓] F1: {metrics['f1']:.4f}")
+    print(f"[✓] MCC: {metrics['mcc']:.4f}")
+    print(f"[✓] Metrics saved to {metrics_output}")
     
     # Clean up database files
     os.system(f"rm -rf {db_name}*")
@@ -202,6 +276,7 @@ def main(dataset_name, num_threads, out_dir, data_dir):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="BLAST analysis for VenusX protein fragments")
     parser.add_argument("--data_dir", default="data_70", help="VenusX dataset to analyze")
+    # parser.add_argument("--data_dir", default="data_30", help="VenusX dataset to analyze")
     parser.add_argument("--dataset", default="Act",choices=["Act", "BindI", "Dom", "Evo", "Motif"], help="VenusX dataset to analyze")
     parser.add_argument("--num_threads", type=int, default=4, help="Number of threads for BLAST")
     parser.add_argument("--out_dir", type=str, default=os.path.join(project_root, "baselines", "blast_ref_cls_results"), help="Output directory")
