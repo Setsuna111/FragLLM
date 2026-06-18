@@ -1,5 +1,5 @@
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 import sys
 
 # Add project root to path for imports
@@ -19,6 +19,14 @@ import warnings
 warnings.filterwarnings('ignore')
 
 DATASET_NAMES = ["Act", "BindI", "Dom", "Evo", "Motif"]
+ESMC_MODEL_PATH = "/home/dataset-local/projects_dir/pretrained_model/ESMC-600M/"
+INTERPROT_REPO_ROOT = "/home/dataset-local/projects_dir/CAPSUL/interprot"
+INTERPROT_ESM_MODEL_DIR = "/home/dataset-local/projects_dir/pretrained_model/models--facebook--esm2_t33_650M_UR50D"
+INTERPROT_SAE_CHECKPOINT = "/home/dataset-local/projects_dir/pretrained_model/InterProt-ESM2-SAEs/esm2_plm1280_l24_sae4096.safetensors"
+INTERPROT_PLM_LAYER = 24
+INTERPROT_ESM_DIM = 1280
+INTERPROT_SAE_DIM = 4096
+INTERPROT_POOLING = "max"
 
 def resolve_data_dir(data_dir):
     """Resolve dataset root relative to project root unless an absolute path is given."""
@@ -64,9 +72,187 @@ def extract_fragments_with_labels(data, dataset_name=None):
     
     return fragments, labels, fragment_ids
 
+def _mean_pool_valid_tokens(sequence_embeddings, attention_mask):
+    """Mean pool valid residue/token embeddings while skipping boundary tokens."""
+    batch_embeddings = []
+    for j in range(sequence_embeddings.shape[0]):
+        valid_mask = attention_mask[j] == 1
+        valid_embeddings = sequence_embeddings[j][valid_mask]
+
+        if len(valid_embeddings) > 2:
+            valid_embeddings = valid_embeddings[1:-1]
+
+        if len(valid_embeddings) > 0:
+            pooled_embedding = valid_embeddings.mean(dim=0)
+        else:
+            raise ValueError("No valid tokens found for pooling.")
+
+        batch_embeddings.append(pooled_embedding.float().cpu().numpy())
+
+    return batch_embeddings
+
+def _is_esmc_model(model_path):
+    model_path_lower = model_path.lower().rstrip("/")
+    return model_path_lower == "esmc" or "esmc" in os.path.basename(model_path_lower)
+
+def _is_interprot_model(model_path):
+    model_path_lower = model_path.lower().rstrip("/")
+    model_basename = os.path.basename(model_path_lower)
+    return (
+        model_path_lower in {"interprot", "interprot_sae", "interprot-esm2-sae"}
+        or "interprot" in model_path_lower
+        or (model_basename.startswith("esm2_plm") and model_basename.endswith(".safetensors"))
+    )
+
+class ESMCSequenceEncoder:
+    """ESMC masked-LM wrapper exposing the same batch encoder interface."""
+
+    def __init__(self, model_path, device):
+        from transformers import AutoModelForMaskedLM
+
+        load_kwargs = {}
+        if device.type == "cuda":
+            load_kwargs["device_map"] = "auto"
+
+        self.tokenizer = AutoTokenizer.from_pretrained(model_path)
+        self.model = AutoModelForMaskedLM.from_pretrained(model_path, **load_kwargs).eval()
+        if "device_map" not in load_kwargs:
+            self.model = self.model.to(device)
+
+        self.device = next(self.model.parameters()).device
+
+    @torch.no_grad()
+    def encode_sequences(self, sequences, batch_size=16, max_length=1024):
+        embeddings = []
+        for i in tqdm(range(0, len(sequences), batch_size)):
+            batch_seqs = sequences[i:i + batch_size]
+            inputs = self.tokenizer(
+                batch_seqs,
+                return_tensors="pt",
+                padding=True,
+                truncation=True,
+                max_length=max_length,
+            )
+            inputs = {k: v.to(self.device) for k, v in inputs.items()}
+            outputs = self.model(**inputs, output_hidden_states=True, return_dict=True)
+            sequence_embeddings = outputs.hidden_states[-1]
+            embeddings.extend(
+                _mean_pool_valid_tokens(sequence_embeddings, inputs["attention_mask"])
+            )
+
+        return np.array(embeddings)
+
+class InterProtSequenceEncoder:
+    """InterProt ESM2+SAE feature extractor adapted from the reference script."""
+
+    def __init__(
+        self,
+        esm_model_dir,
+        sae_checkpoint,
+        plm_layer,
+        esm_dim,
+        sae_dim,
+        pooling,
+        device,
+    ):
+        try:
+            from safetensors.torch import load_file
+            from transformers import EsmModel
+        except ImportError as exc:
+            raise ImportError(
+                "InterProt encoding requires `transformers` and `safetensors` "
+                "in the active environment."
+            ) from exc
+
+        if INTERPROT_REPO_ROOT not in sys.path:
+            sys.path.insert(0, INTERPROT_REPO_ROOT)
+        from interprot.sae_model import SparseAutoencoder
+
+        self.tokenizer = AutoTokenizer.from_pretrained(esm_model_dir)
+        self.esm_model = EsmModel.from_pretrained(esm_model_dir).to(device).eval()
+        self.sae_model = SparseAutoencoder(esm_dim, sae_dim)
+        self.sae_model.load_state_dict(load_file(sae_checkpoint))
+        self.sae_model = self.sae_model.to(device).eval()
+
+        for param in self.esm_model.parameters():
+            param.requires_grad = False
+        for param in self.sae_model.parameters():
+            param.requires_grad = False
+
+        self.plm_layer = plm_layer
+        self.pooling = pooling
+        self.device = device
+
+    @torch.no_grad()
+    def encode_sequences(self, sequences, batch_size=16, max_length=1024):
+        embeddings = []
+        for i in tqdm(range(0, len(sequences), batch_size)):
+            batch_seqs = sequences[i:i + batch_size]
+            inputs = self.tokenizer(
+                batch_seqs,
+                return_tensors="pt",
+                padding=True,
+                truncation=True,
+                max_length=max_length,
+            )
+            inputs = {k: v.to(self.device) for k, v in inputs.items()}
+            outputs = self.esm_model(**inputs, output_hidden_states=True)
+            esm_layer_acts = outputs.hidden_states[self.plm_layer]
+            sae_acts = self.sae_model.get_acts(esm_layer_acts)
+            lengths = inputs["attention_mask"].sum(dim=1)
+
+            for idx, length in enumerate(lengths.tolist()):
+                start = 1 if length > 2 else 0
+                end = length - 1 if length > 2 else length
+                residue_acts = sae_acts[idx, start:end]
+                if residue_acts.numel() == 0:
+                    residue_acts = sae_acts[idx, :1]
+
+                if self.pooling == "mean":
+                    feature = residue_acts.mean(dim=0)
+                elif self.pooling == "max":
+                    feature = residue_acts.max(dim=0).values
+                elif self.pooling == "mean_max":
+                    feature = torch.cat(
+                        [residue_acts.mean(dim=0), residue_acts.max(dim=0).values],
+                        dim=0,
+                    )
+                else:
+                    raise ValueError(f"Unsupported pooling: {self.pooling}")
+
+                embeddings.append(feature.float().cpu().numpy())
+
+        return np.array(embeddings)
+
 def load_plm_model(model_path, device):
     """Load protein language model and tokenizer"""
     print(f"Loading PLM model from {model_path}...")
+
+    if _is_esmc_model(model_path):
+        resolved_model_path = ESMC_MODEL_PATH if model_path.lower().rstrip("/") == "esmc" else model_path
+        print("Detected ESMC model, using AutoModelForMaskedLM...")
+        encoder = ESMCSequenceEncoder(resolved_model_path, device)
+        print(f"Model loaded on device: {encoder.device}")
+        return encoder, None
+
+    if _is_interprot_model(model_path):
+        sae_checkpoint = (
+            model_path
+            if model_path.lower().rstrip("/").endswith(".safetensors")
+            else INTERPROT_SAE_CHECKPOINT
+        )
+        print("Detected InterProt model, using ESM2 hidden states + SAE activations...")
+        encoder = InterProtSequenceEncoder(
+            esm_model_dir=INTERPROT_ESM_MODEL_DIR,
+            sae_checkpoint=sae_checkpoint,
+            plm_layer=INTERPROT_PLM_LAYER,
+            esm_dim=INTERPROT_ESM_DIM,
+            sae_dim=INTERPROT_SAE_DIM,
+            pooling=INTERPROT_POOLING,
+            device=device,
+        )
+        print(f"Model loaded on device: {encoder.device}")
+        return encoder, None
     
     # Special handling for T5-based models (like ProtT5, Ankh)
     if "t5" in model_path.lower() or "prot_t5" in model_path.lower():
@@ -93,6 +279,9 @@ def load_plm_model(model_path, device):
 def encode_sequences_batch(model, tokenizer, sequences, device, batch_size=16, model_path=""):
     """Encode protein sequences using PLM model in batches"""
     print(f"Encoding {len(sequences)} sequences in batches of {batch_size}...")
+
+    if hasattr(model, "encode_sequences"):
+        return model.encode_sequences(sequences, batch_size=batch_size, max_length=1024)
     
     embeddings = []
     
@@ -123,26 +312,9 @@ def encode_sequences_batch(model, tokenizer, sequences, device, batch_size=16, m
                 outputs = model(**inputs)
                 sequence_embeddings = outputs.last_hidden_state
             
-            # Pool embeddings (mean pooling over sequence length, excluding special tokens)
-            attention_mask = inputs['attention_mask']
-            batch_embeddings = []
-            
-            for j in range(len(batch_seqs)):
-                # Get valid token positions (excluding padding and special tokens)
-                valid_mask = attention_mask[j] == 1
-                valid_embeddings = sequence_embeddings[j][valid_mask]
-                
-                # Skip first and last tokens (CLS and EOS) - except for T5 which uses different tokens
-                if len(valid_embeddings) > 2:
-                    valid_embeddings = valid_embeddings[1:-1]
-                
-                # Mean pooling
-                if len(valid_embeddings) > 0:
-                    pooled_embedding = valid_embeddings.mean(dim=0)
-                else:
-                    raise ValueError("No valid tokens found for pooling.")
-                
-                batch_embeddings.append(pooled_embedding.cpu().numpy())
+            batch_embeddings = _mean_pool_valid_tokens(
+                sequence_embeddings, inputs['attention_mask']
+            )
             
             embeddings.extend(batch_embeddings)
     
@@ -505,15 +677,17 @@ if __name__ == "__main__":
                        help="Deprecated alias for evaluating one test dataset. Training always uses all datasets.")
     parser.add_argument("--datasets", nargs="+", choices=DATASET_NAMES, default=DATASET_NAMES,
                        help="VenusX test datasets to evaluate. Training always uses all datasets.")
-    parser.add_argument("--model_path", type=str, 
-                       default="/home/dataset-local/projects_dir/pretrained_model/models--facebook--esm2_t33_650M_UR50D/",
-                       help="Path to protein language model (ESM2, ProtBERT, etc.)")
+    
+    # parser.add_argument("--model_path", type=str, default="/home/dataset-local/projects_dir/pretrained_model/models--facebook--esm2_t33_650M_UR50D/")
+    # parser.add_argument("--model_path", type=str, default="esmc")
+    parser.add_argument("--model_path", type=str, default="interprot")
+
     parser.add_argument("--batch_size", type=int, default=16, 
                        help="Batch size for encoding sequences")
     parser.add_argument("--out_dir", type=str, default=os.path.join(project_root, "baselines", "plm_ref_cls_results"), 
                        help="Output directory")
-    parser.add_argument("--data_dir", type=str, default="data_70", help="Dataset root directory")
-    # parser.add_argument("--data_dir", type=str, default="data_30", help="Dataset root directory")
+    # parser.add_argument("--data_dir", type=str, default="data_70", help="Dataset root directory")
+    parser.add_argument("--data_dir", type=str, default="data_30", help="Dataset root directory")
     parser.add_argument("--cpu", default=False, action="store_true", 
                        help="Force CPU usage (default: use CUDA if available)")
     

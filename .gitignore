@@ -4,7 +4,7 @@ checkpoints*/
 tensorboard_logs/
 .vscode/
 plot/
-Prot2Text-V2/
+# Prot2Text-V2/
 
 eval/cache/
 results/
