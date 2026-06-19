@@ -3,11 +3,23 @@
 ## USAGE
 
 export PYTHONPATH="./:$PYTHONPATH"
-Results_Path=/home/dataset-local/projects_dir/FragLLM/baselines/prot2text/referring_desc/prot2text_v2_11b/EvoRefDesc_results.csv
+
+# DATASETS="ActRefDesc"
+# DATASETS="BindIRefDesc"
+# DATASETS="DomRefDesc"
+# DATASETS="EvoRefDesc"
+DATASETS="MotifRefDesc"
+
+# prot2text
+MODEL_IDENTIFIER="prot2text_v2_11b"
+RESULTS_DIR="/home/dataset-local/projects_dir/FragLLM/baselines/prot2text_results/data_30/referring_desc_fragment_emb"
+
 Evaluate_Exact_Match=True
 Evaluate_Bleu=True
 Evaluate_Rouge=True
 Evaluate_Bert_Score=True
 Verbose=True
 
-python eval/metric_ref_desc_benchmark_lfj.py --results_path $Results_Path --evaluate_exact_match $Evaluate_Exact_Match --evaluate_bleu $Evaluate_Bleu --evaluate_rouge $Evaluate_Rouge --evaluate_bert_score $Evaluate_Bert_Score --verbose $Verbose
+CSV_PATH="${RESULTS_DIR}/${MODEL_IDENTIFIER}/${DATASETS}_results.csv"
+
+python eval/metric_ref_desc_benchmark_lfj.py --results_path $CSV_PATH --evaluate_exact_match $Evaluate_Exact_Match --evaluate_bleu $Evaluate_Bleu --evaluate_rouge $Evaluate_Rouge --evaluate_bert_score $Evaluate_Bert_Score --verbose $Verbose

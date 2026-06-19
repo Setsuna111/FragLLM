@@ -5,7 +5,9 @@ DATASETS="ActRefClass"
 # DATASETS="DomRefClass"
 
 # RESULTS_DIR="./eval_results/referring_cls"
-RESULTS_DIR="/home/dataset-local/projects_dir/FragLLM/baselines/prot2text_results/referring_cls"  # prot2text
+RESULTS_DIR="/home/dataset-local/projects_dir/FragLLM/baselines/prot2text_results/data_70/referring_cls"  # prot2text no frag token
+RESULTS_DIR="/home/dataset-local/projects_dir/FragLLM/baselines/prot2text_results/data_70/referring_cls_fragment_emb"  # prot2text
+RESULTS_DIR="/home/dataset-local/projects_dir/FragLLM/baselines/prot2text_results/data_30/referring_cls_fragment_emb"  # prot2text
 
 # MODEL_IDENTIFIER="0512_ref_small_4_4000"  # Identifier for this model configuration
 # MODEL_IDENTIFIER="0529_all_123500"  # Identifier for this model configuration
