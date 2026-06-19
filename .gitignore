@@ -15,6 +15,7 @@ merge_*_lfj.py
 baselines/*_results/
 baselines/prot2text
 baselines/*_old/
+baseliens/InstructBioMol/utils/foldseek
 model_grounding_cls/*.log
 model_grounding_cls/category_embeddings.pt
 model_grounding_cls/dataset_predictions.json
