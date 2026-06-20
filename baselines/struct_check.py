@@ -118,8 +118,8 @@ def build_parser():
     )
     parser.add_argument(
         "--datasets",
-        default="Act,BindI,Evo,Motif",
-        # default="Dom",
+        # default="Act,BindI,Evo,Motif",
+        default="Dom",
         help="Comma-separated VenusX sub-datasets to check. Supported: Act,BindI,Dom,Evo,Motif",
     )
     parser.add_argument(
