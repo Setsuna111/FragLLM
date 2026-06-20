@@ -36,11 +36,6 @@ PROTEIN_START = "<ProteinS>"
 PROTEIN_END = "<ProteinE>"
 FRAGMENT_START = "<ProteinS>"
 FRAGMENT_END = "<ProteinE>"
-REGION_START = "<RegionS>"
-REGION_END = "<RegionE>"
-TASK_START = "<TaskS>"
-TASK_END = "<TaskE>"
-ANSWER_START = "<AnswerS>"
 
 
 def str_to_dtype(value: str) -> torch.dtype:
@@ -247,37 +242,34 @@ def build_prompt(sample: Dict, task_type: str, task_name: str, input_mode: str) 
     fragment = sample["fragment_sequence"]
     if input_mode == "frag_only":
         protein_block = f"{PROTEIN_START}{fragment}{PROTEIN_END}"
-        context = (
-            "Only the target protein fragment is provided. "
-            f"The fragment amino-acid sequence is {FRAGMENT_START}{fragment}{FRAGMENT_END}."
-        )
+        context = "Only the target protein fragment is provided."
     else:
         protein_block = f"{PROTEIN_START}{sample['sequence']}{PROTEIN_END}"
         context = (
-            "Use the full protein sequence as context. "
+            "Use the provided protein sequence as context. "
             f"The target fragment amino-acid sequence is {FRAGMENT_START}{fragment}{FRAGMENT_END}. "
-            f"Original residues {sample['original_start_pos']}-{sample['original_end_pos']} "
-            f"are the target fragment; in the provided sequence window they map to "
-            f"{sample['fragment_start_pos']}-{sample['fragment_end_pos'] - 1}. "
+            f"Residues {sample['fragment_start_pos']}-{sample['fragment_end_pos'] - 1} "
+            f"are the target fragment. "
             f"Positions are 0-based and inclusive."
         )
 
     if task_type == "class":
         instruction = (
-            f"Classify the {task_name} fragment. Return only the category name or one short "
-            "sentence naming the category."
+            f"What is the category name of this {task_name} fragment? "
+            "Answer with only the category name or one short sentence."
         )
     else:
         instruction = (
-            f"Describe the biological function of the {task_name} fragment. Include likely "
+            f"Describe the biological function of this {task_name} fragment. Include likely "
             "function, important residues, mechanism, binding context, or conservation context "
             "when inferable."
         )
 
     return (
         f"{protein_block}\n"
-        f"{TASK_START}{context} {instruction}{TASK_END}\n"
-        f"{ANSWER_START}"
+        f"{context}\n"
+        f"Question: {instruction}\n"
+        "Answer:"
     )
 
 
@@ -309,9 +301,9 @@ def load_logos_model_and_tokenizer(args: argparse.Namespace):
             device_map=device_map,
         )
     except ValueError as exc:
-        if "model type `qwen3`" not in str(exc):
-            raise
-        tokenizer, model = load_qwen3_with_qwen2_compat(args, device_map)
+        raise NotImplementedError(
+            f"Failed to load LOGOS model with transformers. Check if the model files are correctly placed in {args.model_path} and if the transformers library is up to date. Original error: {exc}"
+        )
 
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
@@ -323,29 +315,6 @@ def load_logos_model_and_tokenizer(args: argparse.Namespace):
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     model.eval()
     return model, tokenizer, device
-
-
-def load_qwen3_with_qwen2_compat(args: argparse.Namespace, device_map):
-    print(
-        "Current transformers does not recognize model_type=qwen3; "
-        "trying Qwen2 compatibility loading."
-    )
-    from transformers import Qwen2Config, Qwen2ForCausalLM, Qwen2TokenizerFast
-
-    config_path = Path(args.model_path) / "config.json"
-    with config_path.open() as handle:
-        config_dict = json.load(handle)
-    config_dict.pop("model_type", None)
-    config_dict["architectures"] = ["Qwen2ForCausalLM"]
-    config = Qwen2Config(**config_dict)
-    tokenizer = Qwen2TokenizerFast.from_pretrained(args.model_path)
-    model = Qwen2ForCausalLM.from_pretrained(
-        args.model_path,
-        config=config,
-        torch_dtype=args.torch_dtype,
-        device_map=device_map,
-    )
-    return tokenizer, model
 
 
 def generate_texts(model, tokenizer, prompts: Sequence[str], device: torch.device, args) -> List[str]:
