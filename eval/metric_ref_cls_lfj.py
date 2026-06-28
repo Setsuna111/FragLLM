@@ -661,25 +661,9 @@ if __name__ == "__main__":
     )
     # print(results)
     for key, value in results.items():
-        print(f"{key}: {value}")
+        print(f"{key}: {value:.4g}")
     print("✓ Comprehensive evaluation from CSV with both retrieval-based classification and language metrics\n")
     
-    # CSV Example 2: InterPro retrieval only
-    print("# InterPro retrieval only:")
-    print("# results = metrics.load_from_csv(")
-    print("#     csv_path='predictions.csv',")
-    print("#     pred_text_col='llm_description',")
-    print("#     target_interpro_id_col='true_interpro_id'")
-    print("# )")
-    print("# → Returns classification metrics via InterPro database retrieval")
-    print()
-    
-    print("=== System Features ===")
-    print("✓ Automatic InterPro database loading")
-    print("✓ Intelligent embedding caching")
-    print("✓ Full-scale retrieval (entire database, not just input subset)")
-    print("✓ Dynamic class count based on database size")
-    print("✓ Support for mixed evaluation modes")
-    print("✓ Optimized for protein domain classification tasks")
+
 
         

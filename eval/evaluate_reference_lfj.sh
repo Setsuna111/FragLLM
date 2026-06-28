@@ -9,10 +9,10 @@
 
 # Model and data paths
 # MODEL_PATH="/home/dataset-local/projects_dir/FragLLM/checkpoints/0513_ref_small_4_hierarchical/checkpoint-4500_merge/"
-MODEL_PATH="/home/dataset-local/projects_dir/FragLLM/checkpoints/0529_all/checkpoint-123500_merge/"
+MODEL_PATH="/home/dataset-local/projects_dir/FragLLM/checkpoints/0529_all/checkpoint-215000_merge/"
 ROOT_DIR="./data_70"
 RESULTS_DIR="./eval_results"
-MODEL_IDENTIFIER="0529_all_123500"  # Identifier for this model configuration
+MODEL_IDENTIFIER="0529_all_215000"  # Identifier for this model configuration
 
 # Evaluation parameters
 SPLIT="test"
@@ -43,7 +43,8 @@ MASTER_PORT=24989     # Master port for distributed training
 # DATASETS="MotifRefDesc,BindIRefDesc,EvoRefDesc"
 
 # DATASETS="MotifRefClass,ActRefClass,BindIRefClass,EvoRefClass,MotifRefDesc,ActRefDesc,BindIRefDesc,EvoRefDesc"
-DATASETS="DomRefClass,DomRefDesc"
+# DATASETS="DomRefClass,DomRefDesc"
+DATASETS="MotifRefClass,ActRefClass,BindIRefClass,EvoRefClass,MotifRefDesc,ActRefDesc,BindIRefDesc,EvoRefDesc,DomRefClass,DomRefDesc"
 
 # ======================================
 # Script Execution - Do not modify below unless needed

@@ -18,8 +18,8 @@ INSTRUCTBIOMOL_ROOT = SCRIPT_DIR.parent
 FRAGLLM_ROOT = Path("/home/dataset-local/projects_dir/FragLLM")
 VENUSX_STRUCT_ROOT = Path("/home/dataset-local/projects_dir/VenusX_dataset")
 
-DEFAULT_DATA_ROOT = FRAGLLM_ROOT / "data_70"
-# DEFAULT_DATA_ROOT = FRAGLLM_ROOT / "data_30"
+# DEFAULT_DATA_ROOT = FRAGLLM_ROOT / "data_70"
+DEFAULT_DATA_ROOT = FRAGLLM_ROOT / "data_30"
 
 DEFAULT_OUTPUT_ROOT = FRAGLLM_ROOT / "baselines" / "instructbiomol_results"
 DEFAULT_MODEL_PATH = Path("/home/dataset-local/projects_dir/pretrained_model/InstructBioMol-instruct")

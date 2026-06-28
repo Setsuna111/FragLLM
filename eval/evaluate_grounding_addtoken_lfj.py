@@ -87,26 +87,27 @@ def replace_matches_sequentially(
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Unified evaluation script for function and reference datasets')
-    parser.add_argument("--model_path", default="/home/dataset-local/projects_dir/FragLLM/checkpoints/0529_all/checkpoint-123500_merge/")
+    parser.add_argument("--model_path", default="/home/dataset-local/projects_dir/FragLLM/checkpoints/0529_all/checkpoint-215000_merge/")
     parser.add_argument("--temperature", default=0.0, type=float, help="generation temperature")
     parser.add_argument("--root_dir", default='./data_70', help="root folder of the data")
-    parser.add_argument("--datasets", default="ActGroundSingle", help="comma-separated list of datasets to evaluate")
+    # parser.add_argument("--datasets", default="ActGroundSingle", help="comma-separated list of datasets to evaluate")
     # parser.add_argument("--datasets", default="ActGroundSingle,BindIGroundSingle,MotifGroundSingle,EvoGroundSingle", help="comma-separated list of datasets to evaluate")
     
     # formal
     # parser.add_argument("--datasets", default="ActGroundSingle,BindIGroundSingle,MotifGroundSingle,EvoGroundSingle,ActGroundGroup,BindIGroundGroup,EvoGroundGroup,MotifGroundGroup", help="comma-separated list of datasets to evaluate")
     # parser.add_argument("--datasets", default="DomGroundSingle,DomGroundGroup", help="comma-separated list of datasets to evaluate")
-    
+    parser.add_argument("--datasets", default="ActGroundSingle,BindIGroundSingle,MotifGroundSingle,EvoGroundSingle,ActGroundGroup,BindIGroundGroup,EvoGroundGroup,MotifGroundGroup,DomGroundSingle,DomGroundGroup", help="comma-separated list of datasets to evaluate")
+
     # parser.add_argument("--datasets", default="ActGroundGroup", help="comma-separated list of datasets to evaluate")
     # parser.add_argument("--datasets", default="ActGroundGroup,BindIGroundGroup,EvoGroundGroup,MotifGroundGroup", help="comma-separated list of datasets to evaluate")
     parser.add_argument("--split", default="test", help="data split to use (train, test, eval)")
     # parser.add_argument("--split", default="train", help="data split to use (train, test, eval)")
     parser.add_argument("--batch_per_device", type=int, default=4, help="batch size for each device")
     parser.add_argument("--save_results_dir", default="./eval_results", help="directory to save results")
-    parser.add_argument("--model_identifier", default="grounding_lora_0529_all_123500", help="identifier for the model to distinguish different configurations")
+    parser.add_argument("--model_identifier", default="grounding_lora_0529_all_215000", help="identifier for the model to distinguish different configurations")
     # parser.add_argument("--single_gpu", action="store_true", help="use single GPU mode instead of distributed")
     parser.add_argument("--single_gpu", default=True, help="use single GPU mode instead of distributed")
-    parser.add_argument("--gpu_id", type=int, default=1, help="GPU ID to use in single GPU mode")
+    parser.add_argument("--gpu_id", type=int, default=3, help="GPU ID to use in single GPU mode")
     
     # Distributed training arguments
     parser.add_argument('--world_size', default=1, type=int, help='number of distributed processes')
