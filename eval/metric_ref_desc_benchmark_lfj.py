@@ -174,9 +174,9 @@ def benchmark_csv(args: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     Compute metrics including BLEU, ROUGE and BERT scores and print results. 
     """
     res = pd.read_csv(args["results_path"]).drop_duplicates(subset=['dataset_idx'])
-    predictions = res['generated'].tolist()
+    predictions = res['generated'].fillna("").astype(str).tolist()
     # references = res['function'].tolist()
-    references = res['reference'].tolist()
+    references = res['reference'].fillna("").astype(str).tolist()
     results = compute_metrics(predictions=predictions, references=references, args=args)
     save_results_path = args["results_path"].replace(".csv", "_metrics.json")
     with open(save_results_path, "w") as f:
