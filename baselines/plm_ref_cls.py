@@ -687,7 +687,8 @@ if __name__ == "__main__":
     parser.add_argument("--out_dir", type=str, default=os.path.join(project_root, "baselines", "plm_ref_cls_results"), 
                        help="Output directory")
     # parser.add_argument("--data_dir", type=str, default="data_70", help="Dataset root directory")
-    parser.add_argument("--data_dir", type=str, default="data_30", help="Dataset root directory")
+    # parser.add_argument("--data_dir", type=str, default="data_30", help="Dataset root directory")
+    parser.add_argument("--data_dir", type=str, default="data_frag_70", help="Dataset root directory")
     parser.add_argument("--cpu", default=False, action="store_true", 
                        help="Force CPU usage (default: use CUDA if available)")
     

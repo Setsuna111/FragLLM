@@ -4,7 +4,7 @@ This script extracts all unique categories from datasets and pre-computes their 
 """
 
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "4"
+os.environ["CUDA_VISIBLE_DEVICES"] = "3"
 import json
 import torch
 from transformers import LlamaModel, LlamaTokenizer, AutoTokenizer

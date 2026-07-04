@@ -4,7 +4,7 @@ This script extracts all unique categories from datasets and pre-computes their 
 """
 
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+os.environ["CUDA_VISIBLE_DEVICES"] = "3"
 import json
 import torch
 from transformers import LlamaModel, LlamaTokenizer, AutoTokenizer
@@ -145,7 +145,7 @@ def encode_categories_with_llama(
 def main():
     parser = argparse.ArgumentParser(description="Preprocess categories for ProteinSAM")
     
-    parser.add_argument("--data_root", type=str, default="../data_90",
+    parser.add_argument("--data_root", type=str, default="../data_frag_70",
                        help="Root directory for datasets")
     parser.add_argument("--data_name", type=str, default="VenusX_Dom||VenusX_Act||VenusX_BindI||VenusX_Motif||VenusX_Evo",
                        help="Alternative: single data_name string supporting multiple datasets with || separator")

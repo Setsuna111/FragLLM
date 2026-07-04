@@ -3,7 +3,7 @@
 ## USAGE
 
 export PYTHONPATH="./:$PYTHONPATH"
-Results_Path=./eval_results/grounding_group/grounding_lora_0529_all_123500/ActGroundGroup_results.csv
+Results_Path=./eval_results/grounding_group/grounding_lora_0529_all_215000/DomGroundGroup_results.csv
 IOU_Threshold=0.5
 BERT_Threshold=1.0
 Embedding_Path=/home/dataset-local/projects_dir/FragLLM/eval/cache/VenusX_Act.npz

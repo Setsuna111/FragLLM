@@ -199,9 +199,11 @@ def main():
 
     # parser.add_argument("--data_root", type=str, default="../data_70",
                     #    help="Root directory for datasets")
-    parser.add_argument("--data_root", type=str, default="../data_30",
+    # parser.add_argument("--data_root", type=str, default="../data_30",
+    #                    help="Root directory for datasets")
+    parser.add_argument("--data_root", type=str, default="../data_frag_70",
                        help="Root directory for datasets")
-    parser.add_argument("--data_root_for_data", type=str, default="../data_70",
+    parser.add_argument("--data_root_for_data", type=str, default="../data_frag_70",
                        help="为了切换data_30时不在重新编码一遍全数据集，故用这个字段将esm embedding的输出目录命名为data_70")
     parser.add_argument("--data_name", type=str,
                        default="VenusX_Dom||VenusX_Act||VenusX_BindI||VenusX_Motif||VenusX_Evo",
