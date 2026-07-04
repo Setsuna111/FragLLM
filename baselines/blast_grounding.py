@@ -467,7 +467,7 @@ def main():
     parser.add_argument(
         "--dataset",
         type=str,
-        default="Act",
+        default="Act,BindI,Dom,Evo,Motif",
         help="Comma-separated dataset names. Choices: Act,BindI,Dom,Evo,Motif",
     )
     parser.add_argument("--data_dir", type=str, default=DEFAULT_DATA_DIR)
