@@ -7,4 +7,4 @@ export PYTHONPATH="./:$PYTHONPATH"
 Path="/home/dataset-local/projects_dir/FragLLM/eval_results/grounding_single/grounding_lora_0529_all_215000/DomGroundSingle_results.csv"
 IOU_Threshold=0.5
 
-python eval/metric_single_grounding.py --results_path $Path --iou_threshold $IOU_Threshold
+python eval/metric_single_grounding_lfj.py --results_path $Path --iou_threshold $IOU_Threshold
