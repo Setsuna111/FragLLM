@@ -373,9 +373,9 @@ def main():
     #                    help="Root directory for datasets")
     # parser.add_argument("--data_root", type=str, default="../data_30",
     #                    help="Root directory for datasets")
-    parser.add_argument("--data_root", type=str, default="../data_frag_70",
+    parser.add_argument("--data_root", type=str, default="../data_frag_50",
                        help="Root directory for datasets")
-    parser.add_argument("--data_root_for_data", type=str, default="../data_frag_70",
+    parser.add_argument("--data_root_for_data", type=str, default="../data_frag_50",
                        help="为了切换data_30时不在重新编码一遍全数据集，故用这个字段将esm embedding的输出目录命名为data_70")
     parser.add_argument("--data_name", type=str, default="VenusX_Dom||VenusX_Act||VenusX_BindI||VenusX_Motif||VenusX_Evo",
                        help="Dataset name(s). Single: 'VenusX_Dom' or Multiple: 'VenusX_Dom||VenusX_Act||VenusX_BindI'")
@@ -433,7 +433,7 @@ def main():
                        help="Standard deviation for position noise")
 
     # Other arguments
-    parser.add_argument("--output_dir", type=str, default="./checkpoints_grounding_3B_cluster_frag_70_point_only",
+    parser.add_argument("--output_dir", type=str, default="./checkpoints_grounding_3B_cluster_frag_50_point_only",
                        help="Output directory for model checkpoints")
     parser.add_argument("--log_dir", type=str, default="./logs",
                        help="Directory for logs")

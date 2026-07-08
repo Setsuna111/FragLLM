@@ -1,5 +1,5 @@
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "2"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 import sys
 
 # Add project root to path for imports
@@ -688,7 +688,7 @@ if __name__ == "__main__":
                        help="Output directory")
     # parser.add_argument("--data_dir", type=str, default="data_70", help="Dataset root directory")
     # parser.add_argument("--data_dir", type=str, default="data_30", help="Dataset root directory")
-    parser.add_argument("--data_dir", type=str, default="data_frag_70", help="Dataset root directory")
+    parser.add_argument("--data_dir", type=str, default="data_frag_50", help="Dataset root directory")
     parser.add_argument("--cpu", default=False, action="store_true", 
                        help="Force CPU usage (default: use CUDA if available)")
     

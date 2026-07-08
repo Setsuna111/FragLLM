@@ -15,7 +15,8 @@ project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, project_root)
 
 DATASET_NAMES = ["Act", "BindI", "Dom", "Evo", "Motif"]
-DEFAULT_DATA_DIR = os.path.join(project_root, "data_70")
+# DEFAULT_DATA_DIR = os.path.join(project_root, "data_70")
+DEFAULT_DATA_DIR = os.path.join(project_root, "data_frag_50")
 DEFAULT_BLASTP = "/home/dataset-local/anaconda3/envs/fragllm/bin/blastp"
 DEFAULT_MAKEBLASTDB = "/home/dataset-local/anaconda3/envs/fragllm/bin/makeblastdb"
 
@@ -474,7 +475,7 @@ def main():
     parser.add_argument(
         "--output_dir",
         type=str,
-        default=os.path.join(project_root, "baselines", "blast_grounding_results"),
+        default=os.path.join(project_root, "baselines", "blast_grounding_results", "data_frag_50"),
     )
     parser.add_argument("--blastp_path", type=str, default=DEFAULT_BLASTP)
     parser.add_argument("--makeblastdb_path", type=str, default=DEFAULT_MAKEBLASTDB)

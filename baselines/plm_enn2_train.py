@@ -231,7 +231,7 @@ if __name__ == "__main__":
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--num_workers", type=int, default=16)
     parser.add_argument("--threshold", type=float, default=0.5)
-    parser.add_argument("--device", type=str, default="cuda:2")
+    parser.add_argument("--device", type=str, default="cuda:0")
     parser.add_argument("--num_ensemble", type=int, default=5)
     parser.add_argument("--base_seed", type=int, default=42)
     parser.add_argument("--out_dir", type=str, default=DEFAULT_RESULTS_ROOT)

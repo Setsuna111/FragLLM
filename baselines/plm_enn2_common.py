@@ -12,7 +12,8 @@ from tqdm import tqdm
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, project_root)
 
-DEFAULT_DATA_DIR = os.path.join(project_root, "data_70")
+# DEFAULT_DATA_DIR = os.path.join(project_root, "data_70")
+DEFAULT_DATA_DIR = os.path.join(project_root, "data_frag_50")
 DEFAULT_MODEL_PATH = "/home/dataset-local/projects_dir/pretrained_model/models--facebook--esm2_t33_650M_UR50D/"
 DEFAULT_EMBEDDINGS_ROOT = os.path.join(project_root, "baselines", "plm_embeddings")
 DEFAULT_RESULTS_ROOT = os.path.join(project_root, "baselines", "plm_enn2_results")

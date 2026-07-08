@@ -107,7 +107,10 @@ class FragDataCollator:
         position_grds = [item["position_grd"] for item in batch]
         starts = [item["start"] for item in batch]
         dataset_idxs = [item["dataset_idx"] for item in batch] if "dataset_idx" in batch[0] else None
-        interpro_ids = [item["interpro_id"] for item in batch] if "interpro_id" in batch[0] else None
+
+        # interpro_ids = [item["interpro_id"] for item in batch] if "interpro_id" in batch[0] else None
+        interpro_ids = [item.get("interpro_id") for item in batch]
+
         # truncate and tokenize sequences
         self.sequence_tokenizer.padding_side = "right"
         tokenized_sequences = self.sequence_tokenizer(
