@@ -68,6 +68,8 @@ def evaluate_group(args):
     protein_rows = []
     matched_rows = []
     protein_ious_by_dataset = {dataset_name: [] for dataset_name in dataset_names}
+    dataset_intersections = {dataset_name: 0 for dataset_name in dataset_names}
+    dataset_unions = {dataset_name: 0 for dataset_name in dataset_names}
     for idx in tqdm(range(len(test_dataset)), desc="Evaluating group grounding"):
         uid, emb, _ = test_dataset[idx]
         protein = test_data[idx]
@@ -77,42 +79,66 @@ def evaluate_group(args):
         pred_bin = (logits[:L].numpy() > threshold)
         true_masks = protein_fragment_groups_to_masks(protein, label_map, L, args.max_seq_len)
 
-        ious = []
-        for cls_idx, true_mask in true_masks.items():
+        pred_classes = set(np.where(pred_bin[:L].any(axis=0))[0].tolist())
+        true_classes = set(true_masks.keys())
+        evaluated_classes = sorted(pred_classes | true_classes)
+        protein_intersection = 0
+        protein_union = 0
+        for cls_idx in evaluated_classes:
+            true_mask = true_masks.get(cls_idx, np.zeros(L, dtype=bool))
             pred_mask = pred_bin[:L, cls_idx]
-            if not pred_mask.any():
-                continue
             iou = residue_iou(pred_mask, true_mask)
             if iou is None:
                 continue
-            ious.append(iou)
+            intersection = int(np.logical_and(pred_mask, true_mask).sum())
+            union = int(np.logical_or(pred_mask, true_mask).sum())
+            protein_intersection += intersection
+            protein_union += union
             matched_rows.append({
                 "dataset": dataset_name,
                 "uid": uid,
                 "class_idx": cls_idx,
                 "residue_level_iou": iou,
+                "residue_level_intersection": intersection,
+                "residue_level_union": union,
+                "has_prediction": bool(pred_mask.any()),
+                "has_truth": bool(true_mask.any()),
             })
 
-        protein_iou = float(np.mean(ious)) if ious else 0.0
+        protein_iou = float(protein_intersection / protein_union) if protein_union else 0.0
+        dataset_intersections[dataset_name] += protein_intersection
+        dataset_unions[dataset_name] += protein_union
         protein_ious_by_dataset[dataset_name].append(protein_iou)
         protein_rows.append({
             "dataset": dataset_name,
             "uid": uid,
             "residue_level_iou": protein_iou,
+            "residue_level_intersection": protein_intersection,
+            "residue_level_union": protein_union,
             "num_true_domains": len(true_masks),
-            "num_matched_domains": len(ious),
+            "num_predicted_domains": len(pred_classes),
+            "num_evaluated_domains": len(evaluated_classes),
         })
 
+    total_intersection = sum(dataset_intersections.values())
+    total_union = sum(dataset_unions.values())
     metrics = {
         "residue_level_iou": float(np.mean([row["residue_level_iou"] for row in protein_rows])) if protein_rows else 0.0,
+        "global_residue_level_iou": float(total_intersection / total_union) if total_union else 0.0,
+        "residue_level_intersection": int(total_intersection),
+        "residue_level_union": int(total_union),
         "num_proteins": len(protein_rows),
-        "num_matched_domains": len(matched_rows),
-        "aggregation": "mean over proteins; unmatched domains are excluded from per-protein IoU",
+        "num_evaluated_domains": len(matched_rows),
+        "aggregation": "per-protein IoU over the union of predicted and true label-residue masks; global_residue_level_iou is summed intersection over summed union",
     }
     dataset_metrics = {}
     for dataset_name, values in protein_ious_by_dataset.items():
+        dataset_union = dataset_unions[dataset_name]
         dataset_metrics[dataset_name] = {
             "residue_level_iou": float(np.mean(values)) if values else 0.0,
+            "global_residue_level_iou": float(dataset_intersections[dataset_name] / dataset_union) if dataset_union else 0.0,
+            "residue_level_intersection": int(dataset_intersections[dataset_name]),
+            "residue_level_union": int(dataset_union),
             "num_proteins": len(values),
         }
 
@@ -126,11 +152,14 @@ def evaluate_group(args):
         json.dump(dataset_metrics, f, indent=2)
 
     print(f"residue_level_iou: {metrics['residue_level_iou']}")
+    print(f"global_residue_level_iou: {metrics['global_residue_level_iou']}")
     print(f"num_proteins: {metrics['num_proteins']}")
-    print(f"num_matched_domains: {metrics['num_matched_domains']}")
+    print(f"num_evaluated_domains: {metrics['num_evaluated_domains']}")
     for dataset_name in dataset_names:
         dataset_iou = dataset_metrics[dataset_name]["residue_level_iou"]
+        dataset_global_iou = dataset_metrics[dataset_name]["global_residue_level_iou"]
         print(f"{dataset_name}_residue_level_iou: {dataset_iou}")
+        print(f"{dataset_name}_global_residue_level_iou: {dataset_global_iou}")
     return metrics
 
 
@@ -144,6 +173,6 @@ if __name__ == "__main__":
     parser.add_argument("--num_ensemble", type=int, default=5)
     parser.add_argument("--max_seq_len", type=int, default=1024)
     parser.add_argument("--threshold", type=float, default=None)
-    parser.add_argument("--device", type=str, default="cuda:2")
+    parser.add_argument("--device", type=str, default="cuda:1")
     parser.add_argument("--limit_test", type=int, default=None)
     evaluate_group(parser.parse_args())
