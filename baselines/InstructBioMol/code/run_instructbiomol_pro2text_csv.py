@@ -1,8 +1,11 @@
 import argparse
 import csv
+import json
 import os
+import re
+import subprocess
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import pandas as pd
 import torch
@@ -21,6 +24,7 @@ from instructbiomol_reference_common import (
 
 
 DEFAULT_INPUT_CSV = FRAGLLM_ROOT / "data_70" / "Pro2Text" / "test_frag_no_train.csv"
+DEFAULT_METRICS_PYTHON = "/home/dataset-local/anaconda3/envs/fragllm/bin/python"
 QUESTION_TEMPLATE = (
     "Protein name: {fullname}; Taxon: {taxon}. "
     "Please describe its function clearly and concisely in professional language."
@@ -66,7 +70,29 @@ def parse_args() -> argparse.Namespace:
             "and AF-{accession}-F1-model_v4.pdb."
         ),
     )
+    parser.add_argument("--compute_metrics", type=str2bool, default=True)
+    parser.add_argument("--evaluate_exact_match", type=str2bool, default=True)
+    parser.add_argument("--evaluate_bleu", type=str2bool, default=True)
+    parser.add_argument("--evaluate_rouge", type=str2bool, default=True)
+    parser.add_argument("--evaluate_bert_score", type=str2bool, default=True)
+    parser.add_argument("--metrics_output_json", default=None)
+    parser.add_argument(
+        "--metrics_python",
+        default=DEFAULT_METRICS_PYTHON,
+        help="Python executable used as fallback when the current environment cannot import evaluate.",
+    )
     return parser.parse_args()
+
+
+def str2bool(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    value = str(value).lower()
+    if value in {"true", "1", "yes", "y"}:
+        return True
+    if value in {"false", "0", "no", "n"}:
+        return False
+    raise argparse.ArgumentTypeError(f"Invalid boolean value: {value}")
 
 
 def clean_sequence(value) -> str:
@@ -201,6 +227,162 @@ def output_path(args: argparse.Namespace) -> Path:
     )
 
 
+def compute_exact_match(predictions: List[str], references: List[str]) -> float:
+    def normalize(text: str) -> str:
+        text = text.lower()
+        return re.sub(r"[^\w]", "", text)
+
+    return sum(
+        normalize(pred) == normalize(ref)
+        for pred, ref in zip(predictions, references)
+    ) / len(predictions)
+
+
+def compute_bert_score(predictions: List[str], references: List[str]) -> Dict[str, Dict[str, Any]]:
+    import evaluate
+    from transformers import BertTokenizer, RobertaTokenizer
+
+    results: Dict[str, Dict[str, Any]] = {}
+    bert = evaluate.load(str(FRAGLLM_ROOT / "eval" / "metrics" / "bertscore"))
+
+    tokenizer = RobertaTokenizer.from_pretrained(
+        "/home/dataset-local/projects_dir/pretrained_model/roberta_large"
+    )
+    pred_ids = tokenizer(
+        predictions, padding="max_length", truncation=True, max_length=495, return_tensors="pt"
+    )["input_ids"]
+    ref_ids = tokenizer(
+        references, padding="max_length", truncation=True, max_length=495, return_tensors="pt"
+    )["input_ids"]
+    roberta_results = bert.compute(
+        predictions=tokenizer.batch_decode(pred_ids, skip_special_tokens=True),
+        references=tokenizer.batch_decode(ref_ids, skip_special_tokens=True),
+        model_type="/home/dataset-local/projects_dir/pretrained_model/roberta_large",
+        num_layers=17,
+    )
+    results["roberta-large"] = {
+        "precision": sum(roberta_results["precision"]) / len(roberta_results["precision"]),
+        "recall": sum(roberta_results["recall"]) / len(roberta_results["recall"]),
+        "f1": sum(roberta_results["f1"]) / len(roberta_results["f1"]),
+    }
+
+    tokenizer = BertTokenizer.from_pretrained(
+        "/home/dataset-local/projects_dir/pretrained_model/biobert-large-cased-v1.1"
+    )
+    pred_ids = tokenizer(
+        predictions, padding="max_length", truncation=True, max_length=495, return_tensors="pt"
+    )["input_ids"]
+    ref_ids = tokenizer(
+        references, padding="max_length", truncation=True, max_length=495, return_tensors="pt"
+    )["input_ids"]
+    biobert_results = bert.compute(
+        predictions=tokenizer.batch_decode(pred_ids, skip_special_tokens=True),
+        references=tokenizer.batch_decode(ref_ids, skip_special_tokens=True),
+        model_type="/home/dataset-local/projects_dir/pretrained_model/biobert-large-cased-v1.1",
+        num_layers=24,
+    )
+    results["biobert-large"] = {
+        "precision": sum(biobert_results["precision"]) / len(biobert_results["precision"]),
+        "recall": sum(biobert_results["recall"]) / len(biobert_results["recall"]),
+        "f1": sum(biobert_results["f1"]) / len(biobert_results["f1"]),
+    }
+    return results
+
+
+def compute_language_metrics(results_df: pd.DataFrame, args: argparse.Namespace) -> Dict[str, Any]:
+    import evaluate
+
+    res = results_df.drop_duplicates(subset=["dataset_idx"])
+    predictions = res["generated"].fillna("").astype(str).tolist()
+    references = res["reference"].fillna("").astype(str).tolist()
+    if not predictions:
+        raise ValueError("No predictions available for metric computation")
+
+    results: Dict[str, Any] = {}
+    if args.evaluate_exact_match:
+        results["exact_match"] = compute_exact_match(predictions, references)
+    if args.evaluate_bleu:
+        bleu = evaluate.load(str(FRAGLLM_ROOT / "eval" / "metrics" / "bleu"))
+        results["bleu2"] = bleu.compute(
+            predictions=predictions, references=references, max_order=2
+        )
+        results["bleu4"] = bleu.compute(predictions=predictions, references=references)
+    if args.evaluate_rouge:
+        rouge = evaluate.load(str(FRAGLLM_ROOT / "eval" / "metrics" / "rouge"))
+        results["rouge"] = rouge.compute(predictions=predictions, references=references)
+    if args.evaluate_bert_score:
+        results["bert"] = compute_bert_score(predictions, references)
+    return results
+
+
+PLOT_METRICS = [
+    ("BLEU-2", ("bleu2", "bleu")),
+    ("BLEU-4", ("bleu4", "bleu")),
+    ("ROUGE-L", ("rouge", "rougeL")),
+    ("RoBERTa-large BERTScore-F1", ("bert", "roberta-large", "f1")),
+    ("BioBERTScore-F1", ("bert", "biobert-large", "f1")),
+]
+
+
+def get_nested_metric(results: Dict[str, Any], path: Tuple[str, ...]) -> Any:
+    value: Any = results
+    for key in path:
+        if not isinstance(value, dict) or key not in value:
+            return None
+        value = value[key]
+    return value
+
+
+def print_plot_metrics(results: Dict[str, Any]) -> None:
+    for metric_name, metric_path in PLOT_METRICS:
+        metric_value = get_nested_metric(results, metric_path)
+        if metric_value is not None:
+            print(f"{metric_name}: {float(metric_value):.4g}")
+
+
+def metrics_output_path(args: argparse.Namespace, save_path: Path) -> Path:
+    if args.metrics_output_json:
+        return Path(args.metrics_output_json)
+    return save_path.with_name(f"{save_path.stem}_metrics.json")
+
+
+def compute_metrics_with_fallback(
+    results_df: pd.DataFrame,
+    args: argparse.Namespace,
+    save_path: Path,
+) -> Dict[str, Any]:
+    metric_path = metrics_output_path(args, save_path)
+    try:
+        metrics = compute_language_metrics(results_df, args)
+    except ModuleNotFoundError as exc:
+        if exc.name != "evaluate":
+            raise
+        cmd = [
+            args.metrics_python,
+            str(FRAGLLM_ROOT / "eval" / "language_metrics_lfj.py"),
+            "--results_path",
+            str(save_path),
+            "--output_json",
+            str(metric_path),
+            "--evaluate_exact_match",
+            str(args.evaluate_exact_match).lower(),
+            "--evaluate_bleu",
+            str(args.evaluate_bleu).lower(),
+            "--evaluate_rouge",
+            str(args.evaluate_rouge).lower(),
+            "--evaluate_bert_score",
+            str(args.evaluate_bert_score).lower(),
+        ]
+        subprocess.run(cmd, cwd=str(FRAGLLM_ROOT), check=True)
+        with metric_path.open("r", encoding="utf-8") as handle:
+            return json.load(handle)
+    metric_path.parent.mkdir(parents=True, exist_ok=True)
+    with metric_path.open("w", encoding="utf-8") as handle:
+        json.dump(metrics, handle, indent=2)
+    print(f"Saved metrics to {metric_path}")
+    return metrics
+
+
 def main() -> None:
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
     args = parse_args()
@@ -248,6 +430,11 @@ def main() -> None:
         writer.writeheader()
         writer.writerows(rows)
     print(f"Saved {len(generated)} generations to {save_path}")
+
+    if args.compute_metrics:
+        results_df = pd.DataFrame(rows)
+        metrics = compute_metrics_with_fallback(results_df, args, save_path)
+        print_plot_metrics(metrics)
 
 
 if __name__ == "__main__":

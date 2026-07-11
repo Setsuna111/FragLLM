@@ -52,7 +52,7 @@ def parse_args():
     parser.add_argument(
         "--fragment_mode",
         choices=["none", "predicted", "random", "truth"],
-        default="none",
+        default="predicted",
     )
     parser.add_argument(
         "--fragment_text",
@@ -60,8 +60,9 @@ def parse_args():
         default="cls",
         help="Use category names or long descriptions as fragment auxiliary text.",
     )
-    parser.add_argument("--predicted_regions_path", default=None)
-    parser.add_argument("--truth_splits", default="test,train")
+    parser.add_argument("--predicted_regions_path", default="/home/dataset-local/projects_dir/FragLLM/eval_results/task4_region_ref/0529_all_215000/test_frag_test_grounding_results_region_ref_results.csv")
+    # parser.add_argument("--truth_splits", default="test,train")
+    parser.add_argument("--truth_splits", default="test")
     parser.add_argument("--save_results_dir", default="./eval_results/task4_function")
     parser.add_argument("--model_identifier", default="0529_all_215000")
     parser.add_argument("--batch_per_device", type=int, default=4)

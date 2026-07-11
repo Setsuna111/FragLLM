@@ -107,7 +107,7 @@ def parse_args():
     parser.add_argument("--model_identifier", default="grounding_lora_0529_all_215000", help="identifier for the model to distinguish different configurations")
     # parser.add_argument("--single_gpu", action="store_true", help="use single GPU mode instead of distributed")
     parser.add_argument("--single_gpu", default=True, help="use single GPU mode instead of distributed")
-    parser.add_argument("--gpu_id", type=int, default=3, help="GPU ID to use in single GPU mode")
+    parser.add_argument("--gpu_id", type=int, default=1, help="GPU ID to use in single GPU mode")
     
     # Distributed training arguments
     parser.add_argument('--world_size', default=1, type=int, help='number of distributed processes')
@@ -115,7 +115,7 @@ def parse_args():
     parser.add_argument('--dist_url', default='env://', help='url used to set up distributed training')
 
     # data
-    parser.add_argument('--use_detailed_template', action='store_true', help='use detailed templates for grounding evaluation')
+    parser.add_argument('--use_detailed_template', default=True, help='use detailed templates for grounding evaluation')
 
     # model_type
     parser.add_argument('--pos_decoder_type', default="ProteinSAM", help='type of position decoder to use')

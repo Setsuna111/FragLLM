@@ -64,7 +64,7 @@ def parse_args():
         "--model_path",
         default="/home/dataset-local/projects_dir/FragLLM/checkpoints/0529_all/checkpoint-215000_merge/",
     )
-    parser.add_argument("--grounding_results_path", required=True)
+    parser.add_argument("--grounding_results_path", default="/home/dataset-local/projects_dir/FragLLM/eval_results/task4_grounding/0529_all_215000/test_frag_test_grounding_results.csv")
     parser.add_argument("--save_results_dir", default="./eval_results/task4_region_ref")
     parser.add_argument("--model_identifier", default="0529_all_215000")
     parser.add_argument("--tasks", default="cls,desc")

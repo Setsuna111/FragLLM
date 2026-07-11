@@ -2,6 +2,7 @@ import argparse
 import ast
 import json
 import os
+import random
 import re
 import sys
 from typing import Dict, List, Tuple
@@ -16,6 +17,7 @@ from transformers import AutoTokenizer
 sys.path.append(".")
 
 from dataset.dataloader_frag import FragDataCollator  # noqa: E402
+from dataset.templates import Frag_Ground_Group_Detailed  # noqa: E402
 from models.protein_llama_addtoken_lfj import ProteinLlamaForCausalLM  # noqa: E402
 
 
@@ -45,7 +47,7 @@ def parse_args():
     parser.add_argument("--root_dir", default="/home/dataset-local/projects_dir/FragLLM/data_70")
     parser.add_argument(
         "--input_csv",
-        default=None,
+        default="data_70/Pro2Text/test_frag_test.csv",
         help="Pro2Text csv, e.g. data_70/Pro2Text/test_frag_test.csv.",
     )
     parser.add_argument("--save_results_dir", default="./eval_results/task4_grounding")
@@ -57,7 +59,8 @@ def parse_args():
     parser.add_argument("--window_stride", type=int, default=768)
     parser.add_argument(
         "--candidate_splits",
-        default="test,train",
+        # default="test,train",
+        default="test",  # 对于frag_test子集，只需要读入test就可以了，一定是在test中重复的
         help="Splits used only to decide which fragment task types to ask.",
     )
     parser.add_argument(
@@ -159,13 +162,7 @@ class Pro2TextGroundingDataset(torch.utils.data.Dataset):
     def __getitem__(self, idx):
         row = self.rows[idx]
         sequence = row["sequence_window"]
-        question = (
-            "The protein sequence is {full_sequence}, with a total length of {N}, "
-            "and the amino acid sequence index starts from 0 within this sequence "
-            "window. Identify all {task_name} categories contained in the protein "
-            "window and provide their start and end positions. If no reliable "
-            "{task_name} is present in this window, answer that none are detected."
-        ).format(
+        question = random.choice(Frag_Ground_Group_Detailed).format(
             full_sequence=self.sequence_placeholder * (len(sequence) + 2),
             N=len(sequence),
             task_name=row["task_name"],
@@ -191,7 +188,7 @@ def build_rows(args) -> List[Dict]:
     if args.limit_samples > 0:
         df = df.iloc[: args.limit_samples].copy()
     candidate_splits = [s.strip() for s in args.candidate_splits.split(",") if s.strip()]
-    candidate_index = load_candidate_task_index(args.root_dir, candidate_splits)
+    candidate_index = load_candidate_task_index(args.root_dir, candidate_splits)  # 找到每个uid在哪些数据集中出现过
 
     rows = []
     for csv_idx, item in df.reset_index(drop=True).iterrows():
@@ -203,7 +200,7 @@ def build_rows(args) -> List[Dict]:
         for data_name in task_datasets:
             for crop_start, sequence_window in make_windows(
                 str(item["sequence"]), args.max_sequence_length, args.window_stride
-            ):
+            ):  # 把长序列切成多个固定长度窗口，让模型分别在每个窗口里预测片段位置
                 rows.append(
                     {
                         "row_id": len(rows),
