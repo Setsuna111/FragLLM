@@ -9,10 +9,10 @@
 
 # Model and data paths
 # MODEL_PATH="/home/dataset-local/projects_dir/FragLLM/checkpoints/0513_ref_small_4_hierarchical/checkpoint-4500_merge/"
-MODEL_PATH="/home/dataset-local/projects_dir/FragLLM/checkpoints/0529_all/checkpoint-215000_merge/"
+MODEL_PATH="/home/dataset-local/projects_dir/FragLLM/checkpoints/0529_all/checkpoint-315000_merge/"
 ROOT_DIR="./data_70"
 RESULTS_DIR="./eval_results"
-MODEL_IDENTIFIER="0529_all_215000"  # Identifier for this model configuration
+MODEL_IDENTIFIER="0529_all_315000"  # Identifier for this model configuration
 
 # Evaluation parameters
 SPLIT="test"
@@ -22,7 +22,7 @@ TEMPERATURE=0.0
 # GPU configuration
 USE_SINGLE_GPU=true  # Set to true for single GPU mode, false for multi-GPU
 SINGLE_GPU_ID=0       # GPU ID to use in single GPU mode
-export CUDA_VISIBLE_DEVICES=2  # Specify visible GPUs for multi-GPU mode
+export CUDA_VISIBLE_DEVICES=1  # Specify visible GPUs for multi-GPU mode
 NUM_GPUS=1           # Number of GPUs for distributed training
 MASTER_PORT=24989     # Master port for distributed training
 

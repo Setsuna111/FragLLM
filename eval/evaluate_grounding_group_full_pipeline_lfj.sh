@@ -6,12 +6,12 @@ PYTHON_BIN="/home/dataset-local/anaconda3/envs/fragllm/bin/python"
 export PYTHONPATH="./:$PYTHONPATH"
 export CUDA_VISIBLE_DEVICES=1
 
-MODEL_PATH="/home/dataset-local/projects_dir/FragLLM/checkpoints/0529_all/checkpoint-215000_merge/"
+MODEL_PATH="/home/dataset-local/projects_dir/FragLLM/checkpoints/0529_all/checkpoint-315000_merge/"
 ROOT_DIR="./data_70"
 SPLIT="test"
 BATCH_PER_DEVICE=4
 TEMPERATURE=0.0
-MODEL_IDENTIFIER="grounding_lora_0529_all_215000"
+MODEL_IDENTIFIER="grounding_lora_0529_all_315000"
 POS_DECODER_TYPE="ProteinSAM"
 USE_DETAILED_TEMPLATE=true
 
@@ -20,7 +20,7 @@ DATASETS="ActGroundGroup,BindIGroundGroup,MotifGroundGroup,EvoGroundGroup,DomGro
 GROUNDING_RESULTS_ROOT="./eval_results"
 GROUNDING_RESULTS_DIR="${GROUNDING_RESULTS_ROOT}/grounding_group/${MODEL_IDENTIFIER}"
 REGION_REF_RESULTS_DIR="./eval_results/grounding_group_ref"
-REGION_REF_MODEL_IDENTIFIER="0529_all_215000"
+REGION_REF_MODEL_IDENTIFIER="0529_all_315000"
 REGION_REF_TASKS="cls,desc"
 
 echo "========================================="
@@ -49,7 +49,7 @@ mkdir -p "$GROUNDING_RESULTS_ROOT" "$REGION_REF_RESULTS_DIR"
     --temperature "$TEMPERATURE" \
     --gpu_id 0 \
     --pos_decoder_type "$POS_DECODER_TYPE" \
-    $([ "$USE_DETAILED_TEMPLATE" = true ] && echo "--use_detailed_template")
+    --use_detailed_template "$USE_DETAILED_TEMPLATE"
 
 "$PYTHON_BIN" eval/evaluate_grounding_group_reference_lfj.py \
     --model_path "$MODEL_PATH" \
