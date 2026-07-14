@@ -31,7 +31,6 @@ RESULTS_DIR="/home/dataset-local/projects_dir/FragLLM/analysis/0712analysis_2/ac
 # MODEL_IDENTIFIER="prot2text_active_site_v6"  # prot2text v6
 MODEL_IDENTIFIER="instructbiomol_active_site_v6"  # instructbiomol v6
 
-
 Evaluate_Exact_Match=True
 Evaluate_Bleu=True
 Evaluate_Rouge=True

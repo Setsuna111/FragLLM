@@ -121,7 +121,6 @@ def parse_args():
     # model_type
     parser.add_argument('--pos_decoder_type', default="ProteinSAM", help='type of position decoder to use')
     
-    
     return parser.parse_args()
 
 def create_dataset(dataset_name, root_dir, split, use_detailed_template, pos_decoder_type, max_sequence_length=1021):
