@@ -58,7 +58,7 @@ def parse_args():
         "--fragment_text",
         choices=["cls", "desc"],
         default="cls",
-        help="Use category names or long descriptions as fragment auxiliary text.",
+        help="Retained for CLI compatibility; function prompts now use fragment classes only.",
     )
     parser.add_argument("--predicted_regions_path", default="/home/dataset-local/projects_dir/FragLLM/eval_results/task4_region_ref/0529_all_215000/test_frag_test_grounding_results_region_ref_results.csv")
     # parser.add_argument("--truth_splits", default="test,train")
@@ -93,29 +93,53 @@ def clean_generation(text: str) -> str:
     )
 
 
-def short_text(text: Any, max_chars: int = 360) -> str:
-    text = re.sub(r"\s+", " ", str(text)).strip()
-    if len(text) <= max_chars:
-        return text
-    return text[: max_chars - 3].rstrip() + "..."
+def normalize_text(text: Any) -> str:
+    text = str(text).strip()
+    text = re.sub(r"<\|.*?\|>", "", text)
+    return re.sub(r"\s+", " ", text).strip()
 
 
-def fragment_label(item: Dict, group: Dict, data_name: str, fragment_text: str) -> str:
-    if fragment_text == "desc":
-        text = group.get("description") or group.get("shortname") or group.get("category")
-    else:
-        text = group.get("category") or group.get("shortname") or group.get("description")
-    positions = []
-    for frag in group.get("frags", []):
-        positions.append(f"({frag.get('start_position')},{frag.get('end_position')})")
-    pos_text = ", ".join(positions)
-    prefix = FRAGMENT_DATASETS.get(data_name, data_name)
-    if pos_text:
-        return f"{prefix} {pos_text}: {short_text(text)}"
-    return f"{prefix}: {short_text(text)}"
+def extract_pred_class(text: Any) -> str:
+    """Extract the class phrase from grounding predictions."""
+    text = normalize_text(text)
+    patterns = [
+        r"^It is the (.*?)[\.\n]*$",
+        r"^The category is (.*?)[\.\n]*$",
+        r"^This belongs to the (.*?)[\.\n]*$",
+        r"^It is categorized as (.*?)[\.\n]*$",
+        r"^This instance is identified as (.*?)[\.\n]*$",
+        r"^The determined class is (.*?)[\.\n]*$",
+        r"^It has been assigned to the (.*?) group[\.\n]*$",
+        r"^It is grouped under the (.*?) category[\.\n]*$",
+        r"^The appropriate category for this is (.*?)[\.\n]*$",
+        r"^Its class designation is (.*?)[\.\n]*$",
+    ]
+    for pattern in patterns:
+        match = re.match(pattern, text, flags=re.IGNORECASE)
+        if match:
+            return match.group(1).strip(" .")
+    return text.strip(" .")
 
 
-def load_truth_fragments(root_dir: str, splits: List[str], fragment_text: str) -> Dict[str, List[str]]:
+def deduplicate_fragment_classes(classes: List[str]) -> List[str]:
+    unique_classes = []
+    seen = set()
+    for class_name in classes:
+        class_name = normalize_text(class_name).strip(" .")
+        key = class_name.casefold()
+        if class_name and key not in seen:
+            unique_classes.append(class_name)
+            seen.add(key)
+    return unique_classes
+
+
+def fragment_class(group: Dict) -> str:
+    return normalize_text(
+        group.get("category") or group.get("shortname") or group.get("description") or ""
+    )
+
+
+def load_truth_fragments(root_dir: str, splits: List[str]) -> Dict[str, List[str]]:
     uid_to_fragments: Dict[str, List[str]] = {}
     for data_name in FRAGMENT_DATASETS:
         for split in splits:
@@ -131,13 +155,13 @@ def load_truth_fragments(root_dir: str, splits: List[str], fragment_text: str) -
                 for group in item.get("fragments", []):
                     if not group.get("frags"):
                         continue
-                    uid_to_fragments.setdefault(uid, []).append(
-                        fragment_label(item, group, data_name, fragment_text)
-                    )
+                    class_name = fragment_class(group)
+                    if class_name:
+                        uid_to_fragments.setdefault(uid, []).append(class_name)
     return uid_to_fragments
 
 
-def load_random_fragment_pool(root_dir: str, fragment_text: str) -> List[str]:
+def load_random_fragment_pool(root_dir: str) -> List[str]:
     pool = []
     for data_name in FRAGMENT_DATASETS:
         for split in ["train", "test"]:
@@ -150,25 +174,24 @@ def load_random_fragment_pool(root_dir: str, fragment_text: str) -> List[str]:
                 for group in item.get("fragments", []):
                     if not group.get("frags"):
                         continue
-                    pool.append(fragment_label(item, group, data_name, fragment_text))
+                    class_name = fragment_class(group)
+                    if class_name:
+                        pool.append(class_name)
     return pool
 
 
-def load_predicted_fragments(path: str, fragment_text: str) -> Dict[str, List[str]]:
+def load_predicted_fragments(path: str) -> Dict[str, List[str]]:
     if not path:
         raise ValueError("--predicted_regions_path is required for fragment_mode=predicted")
     df = pd.read_csv(path)
     uid_to_fragments: Dict[str, List[str]] = {}
-    column = "pred_desc" if fragment_text == "desc" else "pred_cls"
     for _, row in df.iterrows():
-        text = str(row.get(column, "")).strip()
+        text = str(row.get("pred_cls", "")).strip()
         if not text or text.lower() == "nan":
             continue
-        label = (
-            f"{row.get('task_name', row.get('task_dataset', 'fragment'))} "
-            f"{row.get('position', '')}: {short_text(text)}"
-        )
-        uid_to_fragments.setdefault(str(row["accession"]).strip(), []).append(label)
+        class_name = extract_pred_class(text)
+        if class_name:
+            uid_to_fragments.setdefault(str(row["accession"]).strip(), []).append(class_name)
     return uid_to_fragments
 
 
@@ -176,12 +199,12 @@ def build_fragment_lookup(args) -> Dict[str, List[str]]:
     if args.fragment_mode == "none":
         return {}
     if args.fragment_mode == "predicted":
-        return load_predicted_fragments(args.predicted_regions_path, args.fragment_text)
+        return load_predicted_fragments(args.predicted_regions_path)
     if args.fragment_mode == "truth":
         splits = [s.strip() for s in args.truth_splits.split(",") if s.strip()]
-        return load_truth_fragments(args.root_dir, splits, args.fragment_text)
+        return load_truth_fragments(args.root_dir, splits)
     if args.fragment_mode == "random":
-        pool = load_random_fragment_pool(args.root_dir, args.fragment_text)
+        pool = load_random_fragment_pool(args.root_dir)
         if not pool:
             raise ValueError("No fragments found for random mode")
         return {"__pool__": pool}
@@ -204,8 +227,8 @@ class Pro2TextFunctionDataset(torch.utils.data.Dataset):
         if self.args.fragment_mode == "random":
             pool = self.fragment_lookup["__pool__"]
             count = random.randint(3, min(5, len(pool)))
-            return random.sample(pool, count)
-        return self.fragment_lookup.get(uid, [])
+            return deduplicate_fragment_classes(random.sample(pool, count))
+        return deduplicate_fragment_classes(self.fragment_lookup.get(uid, []))
 
     def _build_question(self, row: pd.Series, sequence: str, fragments: List[str]) -> str:
         base = (
@@ -219,14 +242,11 @@ class Pro2TextFunctionDataset(torch.utils.data.Dataset):
         if not fragments:
             return base + "Please describe its function clearly and concisely in professional language."
 
-        mode_text = "categories" if self.args.fragment_text == "cls" else "descriptions"
-        fragment_text = "; ".join(fragments)
+        fragment_text = ", ".join(fragments)
         return (
             base
-            + f"The following protein fragment {mode_text} may indicate local functional "
-            + f"regions of this protein: {fragment_text}. Based on both the sequence "
-            + "embeddings and these fragment annotations, please describe the overall "
-            + "protein function clearly and concisely in professional language."
+            + f"This protein may contain the following fragment classes: {fragment_text}. "
+            + "Please describe its function clearly and concisely in professional language."
         )
 
     def __getitem__(self, idx):
