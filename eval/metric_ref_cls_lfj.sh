@@ -1,29 +1,36 @@
 #!/bin/sh
 export PYTHONPATH="./:$PYTHONPATH"
 
-DATASETS="ActRefClass"
+# DATASETS="ActRefClass"
 # DATASETS="BindIRefClass"
 # DATASETS="DomRefClass"
 # DATASETS="EvoRefClass"
 # DATASETS="MotifRefClass"
-# DATASETS="ActRefClass,BindIRefClass,DomRefClass,EvoRefClass,MotifRefClass"
+DATASETS="ActRefClass,BindIRefClass,DomRefClass,EvoRefClass,MotifRefClass"
 
 # RESULTS_DIR="./eval_results/referring_cls"  # ours
+
+# old baselines
 # RESULTS_DIR="/home/dataset-local/projects_dir/FragLLM/baselines/prot2text_results/data_70/referring_cls"  # prot2text no frag token
 # RESULTS_DIR="/home/dataset-local/projects_dir/FragLLM/baselines/prot2text_results/data_70/referring_cls_fragment_emb"  # prot2text all seqs
 # RESULTS_DIR="/home/dataset-local/projects_dir/FragLLM/baselines/prot2text_results/data_30/ref_frag_only_cls"  # prot2text frag only
 # RESULTS_DIR="/home/dataset-local/projects_dir/FragLLM/baselines/instructbiomol_results/data_30/referring_cls_fragment_struct"  # instructbiomol all seq
 # RESULTS_DIR="/home/dataset-local/projects_dir/FragLLM/baselines/instructbiomol_results/data_30/ref_frag_only_cls"  # instructbiomol frag only
+
+# 0712 baseline analysis
 # RESULTS_DIR="/home/dataset-local/projects_dir/FragLLM/analysis/0712analysis_2/active_site_v6_results/data_70/ref_frag_only_cls_v6"
 # RESULTS_DIR="/home/dataset-local/projects_dir/FragLLM/analysis/0712analysis_2/active_site_v6_results/data_70/referring_cls_fragment_emb_v6"
-RESULTS_DIR="/home/dataset-local/projects_dir/FragLLM/analysis/0712analysis_2/active_site_v6_results/data_70/referring_cls_fragment_struct_v6"
+# RESULTS_DIR="/home/dataset-local/projects_dir/FragLLM/analysis/0712analysis_2/active_site_v6_results/data_70/referring_cls_fragment_struct_v6"
+
+# prot2text formal
+RESULTS_DIR="/home/dataset-local/projects_dir/FragLLM/baselines/prot2text_results/data_70/referring_cls_fragment_emb_v6"
 
 # MODEL_IDENTIFIER="0512_ref_small_4_4000"  # Identifier for this model configuration
 # MODEL_IDENTIFIER="0529_all_315000"  # Identifier for this model configuration
 # MODEL_IDENTIFIER="prot2text_v2_11b"  # prot2text
 # MODEL_IDENTIFIER="instructbiomol_instruct"  # instructbiomol
-# MODEL_IDENTIFIER="prot2text_active_site_v6"  # prot2text v6
-MODEL_IDENTIFIER="instructbiomol_active_site_v6"  # instructbiomol v6
+MODEL_IDENTIFIER="prot2text_v2_11b_ref_v6"  # prot2text v6
+# MODEL_IDENTIFIER="instructbiomol_active_site_v6"  # instructbiomol v6
 
 EMBEDDING_MODEL="/home/dataset-local/projects_dir/pretrained_model/Qwen3-Embedding-0.6B/"
 INTERPRO_DB_PATH="/home/dataset-local/projects_dir/VenusX_dataset/final_interpro_metadata.json"

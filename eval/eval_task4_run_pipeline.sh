@@ -6,8 +6,8 @@ export CUDA_VISIBLE_DEVICES=1
 
 PYTHON_BIN="/home/dataset-local/anaconda3/envs/fragllm/bin/python"
 ROOT_DIR="/home/dataset-local/projects_dir/FragLLM/data_70"
-MODEL_PATH="/home/dataset-local/projects_dir/FragLLM/checkpoints/0529_all/checkpoint-215000_merge/"
-MODEL_IDENTIFIER="0529_all_215000"
+MODEL_PATH="/home/dataset-local/projects_dir/FragLLM/checkpoints/0529_all/checkpoint-315000_merge/"
+MODEL_IDENTIFIER="0529_all_315000"
 RESULTS_DIR="./eval_results"
 BATCH_PER_DEVICE="${BATCH_PER_DEVICE:-4}"
 TEMPERATURE="${TEMPERATURE:-0.0}"
