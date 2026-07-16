@@ -67,6 +67,20 @@ def parse_args():
     parser.add_argument("--model_identifier", default="0529_all_215000")
     parser.add_argument("--batch_per_device", type=int, default=4)
     parser.add_argument("--temperature", type=float, default=0.0)
+    parser.add_argument("--num_beams", type=int, default=4)
+    parser.add_argument("--max_new_tokens", type=int, default=1024)
+    parser.add_argument(
+        "--eos_token_id",
+        type=int,
+        default=128009,
+        help="Official Llama 3.1 end-of-turn token used by the recommended setting.",
+    )
+    parser.add_argument(
+        "--pad_token_id",
+        type=int,
+        default=128002,
+        help="Official Llama 3.1 reserved pad token used by the recommended setting.",
+    )
     parser.add_argument("--gpu_id", type=int, default=0)
     parser.add_argument("--max_sequence_length", type=int, default=1021)
     parser.add_argument("--seed", type=int, default=42)
@@ -131,6 +145,14 @@ def deduplicate_fragment_classes(classes: List[str]) -> List[str]:
             unique_classes.append(class_name)
             seen.add(key)
     return unique_classes
+
+
+def format_class_sentence(classes: List[str]) -> str:
+    """Make class boundaries explicit even when an InterPro name contains commas."""
+    return (
+        f"This protein may contain {len(classes)} fragment classes: "
+        f"{'; '.join(classes)}. "
+    )
 
 
 def fragment_class(group: Dict) -> str:
@@ -242,10 +264,9 @@ class Pro2TextFunctionDataset(torch.utils.data.Dataset):
         if not fragments:
             return base + "Please describe its function clearly and concisely in professional language."
 
-        fragment_text = ", ".join(fragments)
         return (
             base
-            + f"This protein may contain the following fragment classes: {fragment_text}. "
+            + format_class_sentence(fragments)
             + "Please describe its function clearly and concisely in professional language."
         )
 
@@ -308,7 +329,8 @@ def run_inference(dataset: Pro2TextFunctionDataset, args) -> pd.DataFrame:
         args.model_path, pad_token="<|reserved_special_token_0|>"
     )
     model = ProteinLlamaForCausalLM.from_pretrained(args.model_path)
-    model.config.pad_token_id = tokenizer.pad_token_id
+    model.config.eos_token_id = args.eos_token_id
+    model.config.pad_token_id = args.pad_token_id
     sequence_tokenizer = AutoTokenizer.from_pretrained(model.config.esm_path)
     model.eval()
     model = model.bfloat16().to(device)
@@ -340,22 +362,32 @@ def run_inference(dataset: Pro2TextFunctionDataset, args) -> pd.DataFrame:
             if k not in {"accessions", "fragment_contexts"}
         }
         with torch.no_grad():
+            generation_kwargs = {
+                "inputs": None,
+                "input_ids": inputs["input_ids"],
+                "attention_mask": inputs["attention_mask"],
+                "protein_input_ids": inputs["protein_input_ids"],
+                "protein_attention_mask": inputs["protein_attention_mask"],
+                "protein_inputs_embeds": None,
+                "position_refs": inputs["position_refs"],
+                "num_beams": args.num_beams,
+                "early_stopping": args.num_beams > 1,
+                "no_repeat_ngram_size": None,
+                "length_penalty": 1.0,
+                "do_sample": args.temperature > 0,
+                "max_new_tokens": args.max_new_tokens,
+                "eos_token_id": args.eos_token_id,
+                "pad_token_id": args.pad_token_id,
+                "use_cache": True,
+            }
+            if args.temperature > 0:
+                generation_kwargs["temperature"] = args.temperature
+            else:
+                # The checkpoint's generation config sets sampling defaults.
+                generation_kwargs["temperature"] = None
+                generation_kwargs["top_p"] = None
             tok_ids = model.generate(
-                inputs=None,
-                input_ids=inputs["input_ids"],
-                attention_mask=inputs["attention_mask"],
-                protein_input_ids=inputs["protein_input_ids"],
-                protein_attention_mask=inputs["protein_attention_mask"],
-                protein_inputs_embeds=None,
-                position_refs=inputs["position_refs"],
-                num_beams=1,
-                early_stopping=False,
-                no_repeat_ngram_size=None,
-                length_penalty=1.0,
-                do_sample=True if args.temperature > 0 else False,
-                temperature=args.temperature,
-                max_new_tokens=512,
-                use_cache=True,
+                **generation_kwargs,
             )
         decoded = tokenizer.batch_decode(tok_ids, skip_special_tokens=True)
         for generated, reference, row_id, accession, context in zip(

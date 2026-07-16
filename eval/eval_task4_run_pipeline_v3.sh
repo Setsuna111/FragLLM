@@ -1,14 +1,16 @@
 #!/bin/bash
 set -euo pipefail
 
-export PYTHONPATH="./:${PYTHONPATH:-}"
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$PROJECT_ROOT"
+export PYTHONPATH="${PROJECT_ROOT}:${PYTHONPATH:-}"
 export CUDA_VISIBLE_DEVICES=1
 
 PYTHON_BIN="/home/dataset-local/anaconda3/envs/fragllm/bin/python"
-ROOT_DIR="/home/dataset-local/projects_dir/FragLLM/data_70"
-MODEL_PATH="/home/dataset-local/projects_dir/FragLLM/checkpoints/0529_all/checkpoint-315000_merge/"
-MODEL_IDENTIFIER="0529_all_315000"
-RESULTS_DIR="./eval_results"
+ROOT_DIR="${ROOT_DIR:-/home/dataset-local/projects_dir/FragLLM/data_70}"
+MODEL_PATH="${MODEL_PATH:-/home/dataset-local/projects_dir/FragLLM/checkpoints/0529_all/checkpoint-315000_merge/}"
+MODEL_IDENTIFIER="${MODEL_IDENTIFIER:-0529_all_315000_task4_cot_v3}"
+RESULTS_DIR="${RESULTS_DIR:-./eval_results}"
 BATCH_PER_DEVICE="${BATCH_PER_DEVICE:-4}"
 TEMPERATURE="${TEMPERATURE:-0.0}"
 GPU_ID=0
@@ -44,7 +46,7 @@ GROUNDING_PATH="$RESULTS_DIR/task4_grounding/$MODEL_IDENTIFIER/${INPUT_NAME}_gro
 REGION_REF_PATH="$RESULTS_DIR/task4_region_ref/$MODEL_IDENTIFIER/${INPUT_NAME}_grounding_results_region_ref_results.csv"
 
 # Step 3: use only the predicted fragment classes for function generation.
-"$PYTHON_BIN" eval/eval_task4_prot2text_function_with_fragments.py \
+"$PYTHON_BIN" eval/eval_task4_prot2text_function_with_fragments_v3.py \
   --model_path "$MODEL_PATH" \
   --root_dir "$ROOT_DIR" \
   --input_csv "$INPUT_CSV" \
@@ -56,6 +58,10 @@ REGION_REF_PATH="$RESULTS_DIR/task4_region_ref/$MODEL_IDENTIFIER/${INPUT_NAME}_g
   --batch_per_device "$BATCH_PER_DEVICE" \
   --temperature "$TEMPERATURE" \
   --gpu_id "$GPU_ID" \
+  --num_beams 4 \
+  --max_new_tokens 1024 \
+  --eos_token_id 128009 \
+  --pad_token_id 128002 \
   --evaluate_exact_match true \
   --evaluate_bleu true \
   --evaluate_rouge true \
