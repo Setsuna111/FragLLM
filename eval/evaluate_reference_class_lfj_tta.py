@@ -25,9 +25,6 @@ DEFAULT_DATA = REPO_ROOT / "data_70"
 DEFAULT_EMBEDDING_MODEL = Path(
     "/home/dataset-local/projects_dir/pretrained_model/Qwen3-Embedding-0.6B"
 )
-DEFAULT_ONTOLOGY = Path(
-    "/home/dataset-local/projects_dir/VenusX_dataset/final_interpro_metadata.json"
-)
 DEFAULT_CACHE = (
     REPO_ROOT
     / "eval/cache/interpro_embeddings_home_dataset-local_projects_dir_pretrained_model_Qwen3-Embedding-0.6B.pkl"
@@ -88,7 +85,7 @@ def parse_args() -> argparse.Namespace:
     generate.add_argument("--perceiver_latent_size", type=int, default=4)
     generate.add_argument("--max_new_tokens", type=int, default=512)
     generate.add_argument("--limit", type=int)
-    generate.add_argument("--show_progress", action="store_true")
+    generate.add_argument("--show_progress", default=True)
 
     aggregate = subparsers.add_parser(
         "aggregate", help="Average semantic scores from three generated views"
@@ -97,9 +94,12 @@ def parse_args() -> argparse.Namespace:
     aggregate.add_argument("--output_path", required=True)
     aggregate.add_argument("--details_path", required=True)
     aggregate.add_argument("--config_path", required=True)
+    aggregate.add_argument(
+        "--metrics_path",
+        help="Optional direct-ID metrics JSON path; defaults beside output_path",
+    )
     aggregate.add_argument("--dataset_name", choices=SUPPORTED_DATASETS)
     aggregate.add_argument("--embedding_model", default=str(DEFAULT_EMBEDDING_MODEL))
-    aggregate.add_argument("--ontology_path", default=str(DEFAULT_ONTOLOGY))
     aggregate.add_argument("--cache_path", default=str(DEFAULT_CACHE))
     aggregate.add_argument("--batch_size", type=int, default=32)
     aggregate.add_argument("--device", default="cuda")
@@ -276,6 +276,67 @@ def validate_view_frames(frames) -> None:
             raise ValueError(f"dataset_idx is not aligned in {path}")
 
 
+def calculate_direct_id_metrics(predicted_ids, target_ids) -> dict:
+    """Calculate the reference-class metrics without text or embeddings."""
+    import numpy as np
+
+    predicted_ids = [str(value) for value in predicted_ids]
+    target_ids = [str(value) for value in target_ids]
+    if len(predicted_ids) != len(target_ids):
+        raise ValueError("Prediction and target ID lists must have the same length")
+    if not predicted_ids:
+        raise ValueError("Cannot calculate metrics for an empty result")
+
+    all_ids = sorted(set(predicted_ids) | set(target_ids))
+    id_to_index = {interpro_id: index for index, interpro_id in enumerate(all_ids)}
+    predicted = np.asarray([id_to_index[value] for value in predicted_ids], dtype=np.int64)
+    target = np.asarray([id_to_index[value] for value in target_ids], dtype=np.int64)
+    total = int(target.size)
+    correct = int(np.equal(predicted, target).sum())
+
+    precisions = []
+    recalls = []
+    f1_scores = []
+    for label in np.unique(target):
+        pred_is_label = predicted == label
+        target_is_label = target == label
+        true_positive = int(np.logical_and(pred_is_label, target_is_label).sum())
+        predicted_count = int(pred_is_label.sum())
+        target_count = int(target_is_label.sum())
+        precision = true_positive / predicted_count if predicted_count else 0.0
+        recall = true_positive / target_count if target_count else 0.0
+        f1 = (
+            2.0 * precision * recall / (precision + recall)
+            if precision + recall > 0
+            else 0.0
+        )
+        precisions.append(precision)
+        recalls.append(recall)
+        f1_scores.append(f1)
+
+    predicted_counts = np.bincount(predicted, minlength=len(all_ids)).astype(np.float64)
+    target_counts = np.bincount(target, minlength=len(all_ids)).astype(np.float64)
+    total_float = float(total)
+    numerator = float(correct) * total_float - float(
+        np.sum(predicted_counts * target_counts)
+    )
+    denominator_left = total_float**2 - float(np.sum(target_counts**2))
+    denominator_right = total_float**2 - float(np.sum(predicted_counts**2))
+    denominator = np.sqrt(max(0.0, denominator_left * denominator_right))
+
+    return {
+        "accuracy": correct / total_float,
+        "recall": float(np.mean(recalls)),
+        "precision": float(np.mean(precisions)),
+        "f1": float(np.mean(f1_scores)),
+        "mcc": numerator / denominator if denominator > 0 else 0.0,
+        "correct": correct,
+        "samples": total,
+        "num_prediction_classes": len(set(predicted_ids)),
+        "num_target_classes": len(set(target_ids)),
+    }
+
+
 def aggregate_views(args: argparse.Namespace) -> None:
     import numpy as np
     import pandas as pd
@@ -292,9 +353,6 @@ def aggregate_views(args: argparse.Namespace) -> None:
     interpro_ids = list(cache["interpro_ids"])
     if label_embeddings.shape[0] != len(interpro_ids):
         raise ValueError("Cached label embeddings and InterPro IDs have different lengths")
-    with open(args.ontology_path, encoding="utf-8") as handle:
-        ontology = json.load(handle)
-
     all_texts = [
         str(text)
         for _, frame in frames
@@ -320,14 +378,43 @@ def aggregate_views(args: argparse.Namespace) -> None:
     mean_scores = np.stack(view_scores).mean(axis=0)
     mean_winners = mean_scores.argmax(axis=1)
 
-    result = base.copy()
-    result["generated"] = [
-        f"It is the {ontology[interpro_ids[index]]['category']}."
-        for index in mean_winners
-    ]
+    # The semantic aggregation already produces the final discrete prediction.
+    # Keep only IDs in the formal result so the metric stage cannot perform a
+    # second text-to-ID embedding lookup.  The target ID is retained so the
+    # existing metric shell can evaluate this CSV directly.
+    result = pd.DataFrame(
+        {
+            "dataset_idx": base["dataset_idx"],
+            "predicted_interpro_id": [
+                interpro_ids[int(index)] for index in mean_winners
+            ],
+            "interpro_ids": base["interpro_ids"],
+        }
+    )
     output_path = Path(args.output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     result.to_csv(output_path, index=False)
+    metrics_path = Path(args.metrics_path) if args.metrics_path else output_path.with_name(
+        f"{args.dataset_name or output_path.stem.removesuffix('_results')}_metrics.json"
+    )
+    metrics_path.parent.mkdir(parents=True, exist_ok=True)
+    metrics = calculate_direct_id_metrics(
+        result["predicted_interpro_id"].tolist(),
+        result["interpro_ids"].tolist(),
+    )
+    metrics_payload = {
+        "stage": "direct_id_metrics",
+        "dataset": args.dataset_name,
+        "results_path": str(output_path.resolve()),
+        "prediction_column": "predicted_interpro_id",
+        "target_column": "interpro_ids",
+        "uses_embedding_for_metric": False,
+        "metrics": metrics,
+    }
+    metrics_path.write_text(
+        json.dumps(metrics_payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
 
     agreement = Counter()
     details = []
@@ -366,7 +453,6 @@ def aggregate_views(args: argparse.Namespace) -> None:
         "output_path": str(output_path.resolve()),
         "details_path": str(details_path.resolve()),
         "embedding_model": str(Path(args.embedding_model).resolve()),
-        "ontology_path": str(Path(args.ontology_path).resolve()),
         "cache_path": str(Path(args.cache_path).resolve()),
         "batch_size": args.batch_size,
         "device": args.device,
@@ -374,6 +460,9 @@ def aggregate_views(args: argparse.Namespace) -> None:
         "unique_generated_texts": len(unique_texts),
         "agreement": dict(agreement),
         "uses_target_for_selection": False,
+        "result_columns": list(result.columns),
+        "metrics_path": str(metrics_path.resolve()),
+        "metrics": metrics,
         "runtime_seconds": time.perf_counter() - started_at,
     }
     config_path = Path(args.config_path)
@@ -383,6 +472,8 @@ def aggregate_views(args: argparse.Namespace) -> None:
     )
     print(f"Agreement counts: {dict(agreement)}")
     print(f"Saved final TTA result ({len(result)} samples) to {output_path}")
+    print(f"Direct ID metrics: {json.dumps(metrics, ensure_ascii=False)}")
+    print(f"Saved direct ID metrics to {metrics_path}")
 
 
 def main() -> None:

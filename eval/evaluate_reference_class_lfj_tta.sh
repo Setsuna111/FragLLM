@@ -30,7 +30,7 @@ echo "Seeds: 42,43,44"
 echo "Datasets: $DATASETS"
 echo "Output directory: $RUN_DIR"
 
-"$FRAG_PYTHON" "$SCRIPT_DIR/evaluate_reference_lfj_tta.py" generate \
+"$FRAG_PYTHON" "$SCRIPT_DIR/evaluate_reference_class_lfj_tta.py" generate \
     --model_path "$MODEL_PATH" \
     --root_dir "$DATA_ROOT" \
     --split test \
@@ -46,7 +46,7 @@ for DATASET in "${DATASET_ARRAY[@]}"; do
     FINAL_RESULT="$RUN_DIR/${DATASET}_results.csv"
 
     echo "Aggregating dataset: $DATASET"
-    "$EMBEDDING_PYTHON" "$SCRIPT_DIR/evaluate_reference_lfj_tta.py" aggregate \
+    "$EMBEDDING_PYTHON" "$SCRIPT_DIR/evaluate_reference_class_lfj_tta.py" aggregate \
         --inputs \
             "$VIEW_ROOT/seed42/${DATASET}_results.csv" \
             "$VIEW_ROOT/seed43/${DATASET}_results.csv" \

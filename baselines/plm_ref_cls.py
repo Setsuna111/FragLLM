@@ -1,5 +1,5 @@
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 import sys
 
 # Add project root to path for imports
@@ -678,17 +678,17 @@ if __name__ == "__main__":
     parser.add_argument("--datasets", nargs="+", choices=DATASET_NAMES, default=DATASET_NAMES,
                        help="VenusX test datasets to evaluate. Training always uses all datasets.")
     
-    # parser.add_argument("--model_path", type=str, default="/home/dataset-local/projects_dir/pretrained_model/models--facebook--esm2_t33_650M_UR50D/")
+    parser.add_argument("--model_path", type=str, default="/home/dataset-local/projects_dir/pretrained_model/models--facebook--esm2_t33_650M_UR50D/")
     # parser.add_argument("--model_path", type=str, default="esmc")
-    parser.add_argument("--model_path", type=str, default="interprot")
+    # parser.add_argument("--model_path", type=str, default="interprot")
 
     parser.add_argument("--batch_size", type=int, default=16, 
                        help="Batch size for encoding sequences")
     parser.add_argument("--out_dir", type=str, default=os.path.join(project_root, "baselines", "plm_ref_cls_results"), 
                        help="Output directory")
-    # parser.add_argument("--data_dir", type=str, default="data_70", help="Dataset root directory")
+    parser.add_argument("--data_dir", type=str, default="data_70", help="Dataset root directory")
     # parser.add_argument("--data_dir", type=str, default="data_30", help="Dataset root directory")
-    parser.add_argument("--data_dir", type=str, default="data_frag_50", help="Dataset root directory")
+    # parser.add_argument("--data_dir", type=str, default="data_frag_50", help="Dataset root directory")
     parser.add_argument("--cpu", default=False, action="store_true", 
                        help="Force CPU usage (default: use CUDA if available)")
     
