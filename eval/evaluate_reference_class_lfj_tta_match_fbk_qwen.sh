@@ -6,18 +6,18 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 FRAG_PYTHON="${FRAG_PYTHON:-/home/dataset-local/anaconda3/envs/fragllm/bin/python}"
 EMBEDDING_PYTHON="${EMBEDDING_PYTHON:-/home/dataset-local/anaconda3/envs/pika_for_qwen/bin/python}"
-MODEL_PATH="${MODEL_PATH:-$ROOT_DIR/checkpoints/0529_all/checkpoint-315000_merge}"
+MODEL_PATH="${MODEL_PATH:-$ROOT_DIR/checkpoints/0529_all/checkpoint-330000_merge}"
 DATA_ROOT="${DATA_ROOT:-$ROOT_DIR/data_70}"
 RESULTS_ROOT="${RESULTS_ROOT:-$ROOT_DIR/eval_results}"
-MODEL_IDENTIFIER="${MODEL_IDENTIFIER:-0529_all_315000_tta3_match_fbk_qwen}"
+MODEL_IDENTIFIER="${MODEL_IDENTIFIER:-0529_all_330000_tta3_match_fbk_qwen}"
 BATCH_PER_DEVICE="${BATCH_PER_DEVICE:-4}"
-PHYSICAL_GPU="${PHYSICAL_GPU:-1}"
+PHYSICAL_GPU="${PHYSICAL_GPU:-0}"
 DATASETS="${DATASETS:-ActRefClass,BindIRefClass,DomRefClass,EvoRefClass,MotifRefClass}"
 # Reuse the already generated seed42/43/44 views by default. Set
 # RUN_GENERATE=1 to run the unchanged three-view inference stage first.
 RUN_GENERATE="${RUN_GENERATE:-0}"
-SOURCE_RUN_DIR="${SOURCE_RUN_DIR:-$RESULTS_ROOT/referring_cls/0529_all_315000_tta3_mean}"
-BASELINE_RUN_DIR="${BASELINE_RUN_DIR:-$SOURCE_RUN_DIR}"
+SOURCE_RUN_DIR="${SOURCE_RUN_DIR:-$RESULTS_ROOT/referring_cls/0529_all_330000_tta3_match_fbk_qwen}"
+BASELINE_RUN_DIR="${BASELINE_RUN_DIR:-$RESULTS_ROOT/referring_cls/0529_all_315000_tta3_mean}"
 
 RUN_DIR="$RESULTS_ROOT/referring_cls/$MODEL_IDENTIFIER"
 if [[ "$RUN_GENERATE" == "1" ]]; then

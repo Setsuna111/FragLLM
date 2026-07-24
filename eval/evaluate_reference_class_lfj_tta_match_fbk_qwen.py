@@ -72,6 +72,11 @@ def extract_category(text: object) -> str:
     """Remove a known answer prefix and return the normalized category."""
 
     normalized = normalize_category(text)
+    grouped_match = re.fullmatch(
+        r"it is grouped under the (.+) category", normalized
+    )
+    if grouped_match:
+        return grouped_match.group(1).strip(" \t\r\n.?!;:\"'")
     for prefix in ANSWER_PREFIXES:
         match = re.fullmatch(prefix + r"(.+)", normalized)
         if match:
@@ -98,7 +103,7 @@ def parse_args() -> argparse.Namespace:
     generate.add_argument("--output_dir", required=True)
     generate.add_argument("--seeds", type=comma_separated_seeds, default=[42, 43, 44])
     generate.add_argument("--batch_per_device", type=int, default=4)
-    generate.add_argument("--gpu_id", type=int, default=0)
+    generate.add_argument("--gpu_id", type=int, default=1)
     generate.add_argument("--perceiver_latent_size", type=int, default=4)
     generate.add_argument("--max_new_tokens", type=int, default=512)
     generate.add_argument("--limit", type=int)

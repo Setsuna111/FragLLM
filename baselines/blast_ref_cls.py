@@ -122,7 +122,8 @@ def run_blastp_query(query_fasta, db_name, out_file, num_threads):
         "blastp",
         "-query", query_fasta,
         "-db", db_name,
-        "-evalue", "1000000",
+        # "-evalue", "1000000",
+        "-evalue", "1e-10",  # more strict
         "-word_size", "2",
         "-max_target_seqs", "1",  # Only get top hit
         "-seg", "no",
@@ -419,13 +420,14 @@ def run_evaluations(eval_datasets, num_threads, out_dir, data_dir):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="BLAST analysis for VenusX protein fragments")
-    # parser.add_argument("--data_dir", default="data_70", help="Dataset root directory, e.g. data, data_70, data_30, or an absolute path")
+    parser.add_argument("--data_dir", default="data_70", help="Dataset root directory, e.g. data, data_70, data_30, or an absolute path")
     # parser.add_argument("--data_dir", default="data_30", help="VenusX dataset to analyze")
-    parser.add_argument("--data_dir", default="data_frag_50", help="VenusX dataset to analyze")
+    # parser.add_argument("--data_dir", default="data_frag_50", help="VenusX dataset to analyze")
     parser.add_argument("--dataset", default=None, choices=DATASET_NAMES, help="Evaluate one VenusX test dataset. Training always uses all datasets.")
     parser.add_argument("--datasets", nargs="+", choices=DATASET_NAMES, default=DATASET_NAMES, help="VenusX test datasets to evaluate. Training always uses all datasets.")
     parser.add_argument("--num_threads", type=int, default=8, help="Number of threads for BLAST")
-    parser.add_argument("--out_dir", type=str, default=os.path.join(project_root, "baselines", "blast_ref_cls_results"), help="Output directory")
+    # parser.add_argument("--out_dir", type=str, default=os.path.join(project_root, "baselines", "blast_ref_cls_results"), help="Output directory")
+    parser.add_argument("--out_dir", type=str, default=os.path.join(project_root, "baselines", "blast_ref_cls_results_1e-10"), help="Output directory")
     
     args = parser.parse_args()
     

@@ -20,7 +20,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-DEFAULT_MODEL = REPO_ROOT / "checkpoints/0529_all/checkpoint-315000_merge"
+DEFAULT_MODEL = REPO_ROOT / "checkpoints/0529_all/checkpoint-334000_merge"
 DEFAULT_DATA = REPO_ROOT / "data_70"
 DEFAULT_EMBEDDING_MODEL = Path(
     "/home/dataset-local/projects_dir/pretrained_model/Qwen3-Embedding-0.6B"
