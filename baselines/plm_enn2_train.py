@@ -10,6 +10,7 @@ from tqdm import tqdm
 
 from plm_enn2_common import (
     DEFAULT_DATA_DIR,
+    DEFAULT_EMBEDDINGS_ROOT,
     DEFAULT_MODEL_PATH,
     DEFAULT_RESULTS_ROOT,
     ProteinDatasetPrecomputed,
@@ -19,8 +20,8 @@ from plm_enn2_common import (
     get_embedding_dir,
     get_result_dir,
     load_combined_data,
+    load_planned_samples,
     parse_dataset_names,
-    precompute_embeddings,
 )
 
 
@@ -135,27 +136,49 @@ def train_single_model(classifier, train_dataset, eval_dataset, device, args, se
 def main(args):
     dataset_names = parse_dataset_names(args.datasets)
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
-    emb_dir = get_embedding_dir(args.data_dir, args.model_path, dataset_names)
+    emb_dir = get_embedding_dir(
+        args.data_dir,
+        args.model_path,
+        dataset_names,
+        args.max_seq_len,
+        args.embeddings_root,
+    )
     out_dir = get_result_dir(args.out_dir, args.data_dir, args.model_path, dataset_names, args.num_ensemble)
     os.makedirs(out_dir, exist_ok=True)
 
-    if args.precompute_embeddings or not os.path.exists(emb_dir):
-        precompute_embeddings(
-            args.model_path,
-            dataset_names,
-            ["train", "test"],
-            emb_dir,
-            device,
-            max_seq_len=args.max_seq_len,
-            data_dir=args.data_dir,
+    if args.precompute_embeddings:
+        raise ValueError(
+            "Embedding generation is now a deterministic separate stage; run "
+            "baselines/plm_enn2_precompute.py before training."
         )
+    cache_metadata_path = os.path.join(emb_dir, "cache_metadata.json")
+    if not os.path.exists(cache_metadata_path):
+        raise FileNotFoundError(
+            f"Aligned embedding cache is missing: {cache_metadata_path}. "
+            "Run baselines/plm_enn2_precompute.py first."
+        )
+    with open(cache_metadata_path) as handle:
+        cache_metadata = json.load(handle)
+    if int(cache_metadata["max_seq_len"]) != args.max_seq_len:
+        raise ValueError("Embedding cache max_seq_len does not match training")
+    if cache_metadata.get("datasets") != dataset_names:
+        raise ValueError("Embedding cache datasets do not match training")
+    if os.path.abspath(cache_metadata["data_root"]) != os.path.abspath(args.data_dir):
+        raise ValueError("Embedding cache data_root does not match training")
+    if os.path.abspath(cache_metadata["model_path"]) != os.path.abspath(args.model_path):
+        raise ValueError("Embedding cache model_path does not match training")
 
     train_data = load_combined_data(dataset_names, "train", data_dir=args.data_dir)
-    test_data = load_combined_data(dataset_names, "test", data_dir=args.data_dir)
     label_map = build_label_map(train_data)
     num_classes = len(label_map)
-    train_dataset = ProteinDatasetPrecomputed(train_data, label_map, num_classes, os.path.join(emb_dir, "train"), args.max_seq_len)
-    test_dataset = ProteinDatasetPrecomputed(test_data, label_map, num_classes, os.path.join(emb_dir, "test"), args.max_seq_len)
+    train_samples = load_planned_samples(emb_dir, "train_group", args.max_seq_len)
+    test_samples = load_planned_samples(emb_dir, "test_group", args.max_seq_len)
+    train_dataset = ProteinDatasetPrecomputed(
+        train_samples, label_map, num_classes, emb_dir
+    )
+    test_dataset = ProteinDatasetPrecomputed(
+        test_samples, label_map, num_classes, emb_dir
+    )
     _, first_emb, _ = train_dataset[0]
     hidden_dim = first_emb.shape[1]
 
@@ -205,6 +228,11 @@ def main(args):
         "mean_iou": mean_iou,
         "best_iou_mean": float(np.mean(best_ious)) if best_ious else 0.0,
         "threshold": args.threshold,
+        "max_seq_len": args.max_seq_len,
+        "embedding_cache": str(os.path.abspath(emb_dir)),
+        "crop_policy_version": cache_metadata["crop_policy_version"],
+        "cache_model_identity": cache_metadata["model_identity"],
+        "cache_stats": cache_metadata.get("stats", {}),
         "architecture": architecture,
     }
     with open(os.path.join(out_dir, "metadata.json"), "w") as f:
@@ -217,7 +245,8 @@ if __name__ == "__main__":
     parser.add_argument("--datasets", type=str, default="Act,BindI,Dom,Evo,Motif")
     parser.add_argument("--data_dir", type=str, default=DEFAULT_DATA_DIR)
     parser.add_argument("--model_path", type=str, default=DEFAULT_MODEL_PATH)
-    parser.add_argument("--max_seq_len", type=int, default=1024)
+    parser.add_argument("--max_seq_len", type=int, default=1021)
+    parser.add_argument("--embeddings_root", type=str, default=DEFAULT_EMBEDDINGS_ROOT)
     parser.add_argument("--precompute_embeddings", action="store_true")
     parser.add_argument("--num_filters", type=int, default=512)
     parser.add_argument("--kernel_size", type=int, default=9)
@@ -229,9 +258,9 @@ if __name__ == "__main__":
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--batch_size", type=int, default=16)
-    parser.add_argument("--num_workers", type=int, default=16)
+    parser.add_argument("--num_workers", type=int, default=32)
     parser.add_argument("--threshold", type=float, default=0.5)
-    parser.add_argument("--device", type=str, default="cuda:0")
+    parser.add_argument("--device", type=str, default="cuda:1")
     parser.add_argument("--num_ensemble", type=int, default=5)
     parser.add_argument("--base_seed", type=int, default=42)
     parser.add_argument("--out_dir", type=str, default=DEFAULT_RESULTS_ROOT)

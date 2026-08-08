@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -12,10 +13,23 @@ from tqdm import tqdm
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, project_root)
 
-# DEFAULT_DATA_DIR = os.path.join(project_root, "data_70")
-DEFAULT_DATA_DIR = os.path.join(project_root, "data_frag_50")
+from baselines.grounding_alignment import (  # noqa: E402
+    CROP_POLICY_VERSION,
+    attach_view_identity,
+    cache_dir,
+    crop_sequence,
+    load_cached_embedding,
+    localize_spans,
+    plan_center_crop,
+    read_jsonl,
+    validate_manifest_record,
+)
+
+DEFAULT_DATA_DIR = os.path.join(project_root, "data_70")
+# DEFAULT_DATA_DIR = os.path.join(project_root, "data_frag_50")
 DEFAULT_MODEL_PATH = "/home/dataset-local/projects_dir/pretrained_model/models--facebook--esm2_t33_650M_UR50D/"
-DEFAULT_EMBEDDINGS_ROOT = os.path.join(project_root, "baselines", "plm_embeddings")
+DEFAULT_EMBEDDINGS_ROOT = os.path.join(project_root, "baselines", "plm_embedding_plmenn")
+LEGACY_EMBEDDINGS_ROOT = os.path.join(project_root, "baselines", "plm_embeddings")
 DEFAULT_RESULTS_ROOT = os.path.join(project_root, "baselines", "plm_enn2_results")
 
 
@@ -31,12 +45,21 @@ def get_model_name(model_path):
     return model_path.rstrip("/").split("/")[-1]
 
 
-def get_embedding_dir(data_dir, model_path, dataset_names):
-    return os.path.join(
-        DEFAULT_EMBEDDINGS_ROOT,
-        get_data_dir_name(data_dir),
-        get_model_name(model_path),
-        "+".join(dataset_names),
+def get_embedding_dir(
+    data_dir,
+    model_path,
+    dataset_names,
+    max_seq_len=1021,
+    embeddings_root=DEFAULT_EMBEDDINGS_ROOT,
+):
+    return str(
+        cache_dir(
+            embeddings_root,
+            data_dir,
+            model_path,
+            dataset_names,
+            max_seq_len,
+        )
     )
 
 
@@ -63,7 +86,14 @@ def load_venusx_dataset(dataset_name, split, data_dir=None):
 def load_combined_data(dataset_names, split, data_dir=None):
     combined = []
     for name in dataset_names:
-        combined.extend(load_venusx_dataset(name, split, data_dir=data_dir))
+        for raw_index, protein in enumerate(
+            load_venusx_dataset(name, split, data_dir=data_dir)
+        ):
+            record = dict(protein)
+            record["_dataset_name"] = name
+            record["_raw_record_index"] = raw_index
+            record["_split"] = split
+            combined.append(record)
     return combined
 
 
@@ -118,63 +148,191 @@ def encode_sequence(plm, tokenizer, sequence, device, is_t5):
     return valid
 
 
-def precompute_embeddings(model_path, dataset_names, splits, output_dir, device, max_seq_len=1024, data_dir=None):
-    os.makedirs(output_dir, exist_ok=True)
-    plm, tokenizer, is_t5 = load_plm_model(model_path, device)
+def _fragment_group_record(group, group_index, crop_start):
+    global_spans = [
+        (int(frag["start_position"]), int(frag["end_position"]))
+        for frag in group["frags"]
+    ]
+    local_spans = [
+        (start - crop_start, end - crop_start + 1)
+        for start, end in global_spans
+    ]
+    return {
+        "fragment_group_index": int(group_index),
+        "interpro_id": str(group.get("interpro_id", "")),
+        "category": str(group.get("category", "")),
+        "global_spans": global_spans,
+        "local_spans": local_spans,
+    }
 
-    for split in splits:
-        print(f"\n=== Processing {split} split ===")
-        data = load_combined_data(dataset_names, split, data_dir=data_dir)
-        split_dir = os.path.join(output_dir, split)
-        os.makedirs(split_dir, exist_ok=True)
 
-        for protein in tqdm(data, desc=f"Encoding {split}"):
-            uid = protein["uid"]
-            sequence = protein["sequence"][:max_seq_len]
-            emb_path = os.path.join(split_dir, f"{uid}.pt")
-            if os.path.exists(emb_path):
+def _base_planned_record(protein, split, task_mode, sample_id, crop, sequence):
+    cropped = crop_sequence(sequence, crop)
+    return {
+        "sample_id": sample_id,
+        "dataset_name": str(protein["_dataset_name"]),
+        "split": split,
+        "task_mode": task_mode,
+        "uid": str(protein["uid"]),
+        "raw_record_index": int(protein["_raw_record_index"]),
+        "original_sequence_length": len(sequence),
+        "crop_start": crop.crop_start,
+        "crop_end": crop.crop_end,
+        "cropped_sequence_length": crop.crop_length,
+        "envelope_start": crop.envelope_start,
+        "envelope_end": crop.envelope_end,
+        "envelope_length": crop.envelope_length,
+        "sequence": cropped,
+    }
+
+
+def plan_group_samples(raw_data, split, max_seq_len, model_path=None):
+    samples = []
+    filtered = []
+    for protein in raw_data:
+        sequence = str(protein["sequence"])
+        all_spans = [
+            (int(frag["start_position"]), int(frag["end_position"]))
+            for group in protein["fragments"]
+            for frag in group["frags"]
+        ]
+        sample_id = (
+            f"group:{split}:{protein['_dataset_name']}:{protein['uid']}:"
+            f"{protein['_raw_record_index']}"
+        )
+        crop = plan_center_crop(len(sequence), all_spans, max_seq_len)
+        if crop is None:
+            envelope_start = min(start for start, _ in all_spans)
+            envelope_end = max(end for _, end in all_spans)
+            filtered.append(
+                {
+                    "sample_id": sample_id,
+                    "dataset_name": protein["_dataset_name"],
+                    "split": split,
+                    "task_mode": f"{split}_group",
+                    "uid": str(protein["uid"]),
+                    "raw_record_index": int(protein["_raw_record_index"]),
+                    "envelope_length": envelope_end - envelope_start + 1,
+                    "max_seq_len": int(max_seq_len),
+                    "reason": "envelope_exceeds_max_len",
+                }
+            )
+            continue
+        record = _base_planned_record(
+            protein, split, f"{split}_group", sample_id, crop, sequence
+        )
+        record["fragment_groups"] = [
+            _fragment_group_record(group, group_index, crop.crop_start)
+            for group_index, group in enumerate(protein["fragments"])
+        ]
+        record["global_spans"] = all_spans
+        record["local_spans"] = localize_spans(all_spans, crop)
+        if model_path is not None:
+            record = attach_view_identity(record, model_path)
+        validate_manifest_record(record, max_seq_len)
+        samples.append(record)
+    stats = {
+        "seen": len(raw_data),
+        "retained": len(samples),
+        "filtered_envelope": len(filtered),
+    }
+    return samples, filtered, stats
+
+
+def plan_single_samples(raw_data, split, max_seq_len, model_path=None):
+    samples = []
+    filtered = []
+    for protein in raw_data:
+        sequence = str(protein["sequence"])
+        for group_index, group in enumerate(protein["fragments"]):
+            spans = [
+                (int(frag["start_position"]), int(frag["end_position"]))
+                for frag in group["frags"]
+            ]
+            sample_id = (
+                f"single:{split}:{protein['_dataset_name']}:{protein['uid']}:"
+                f"{protein['_raw_record_index']}:{group.get('interpro_id', '')}:{group_index}"
+            )
+            crop = plan_center_crop(len(sequence), spans, max_seq_len)
+            if crop is None:
+                envelope_start = min(start for start, _ in spans)
+                envelope_end = max(end for _, end in spans)
+                filtered.append(
+                    {
+                        "sample_id": sample_id,
+                        "dataset_name": protein["_dataset_name"],
+                        "split": split,
+                        "task_mode": f"{split}_single",
+                        "uid": str(protein["uid"]),
+                        "raw_record_index": int(protein["_raw_record_index"]),
+                        "fragment_group_index": group_index,
+                        "interpro_id": str(group.get("interpro_id", "")),
+                        "envelope_length": envelope_end - envelope_start + 1,
+                        "max_seq_len": int(max_seq_len),
+                        "reason": "envelope_exceeds_max_len",
+                    }
+                )
                 continue
-            emb = encode_sequence(plm, tokenizer, sequence, device, is_t5)
-            torch.save(emb.cpu(), emb_path)
+            record = _base_planned_record(
+                protein, split, f"{split}_single", sample_id, crop, sequence
+            )
+            record["fragment_group_index"] = int(group_index)
+            record["interpro_id"] = str(group.get("interpro_id", ""))
+            record["category"] = str(group.get("category", ""))
+            record["global_spans"] = spans
+            record["local_spans"] = localize_spans(spans, crop)
+            if model_path is not None:
+                record = attach_view_identity(record, model_path)
+            validate_manifest_record(record, max_seq_len)
+            samples.append(record)
+    stats = {
+        "seen": len(samples) + len(filtered),
+        "retained": len(samples),
+        "filtered_envelope": len(filtered),
+    }
+    return samples, filtered, stats
+
+
+def load_planned_samples(embedding_dir, mode, max_seq_len):
+    records = read_jsonl(Path(embedding_dir) / mode / "manifest.jsonl")
+    for record in records:
+        validate_manifest_record(record, max_seq_len)
+    return records
+
+
+def load_sample_embedding(embedding_dir, sample):
+    return load_cached_embedding(embedding_dir, sample)
 
 
 class ProteinDatasetPrecomputed(Dataset):
-    def __init__(self, raw_data, label_map, num_classes, emb_dir, max_seq_len=1024):
+    def __init__(self, samples, label_map, num_classes, emb_dir):
         self.num_classes = num_classes
-        self.max_seq_len = max_seq_len
         self.emb_dir = emb_dir
         self.samples = []
 
-        for protein in tqdm(raw_data, desc="Building dataset"):
-            uid = protein["uid"]
-            seq = protein["sequence"][:max_seq_len]
-            L = len(seq)
+        for sample in tqdm(samples, desc="Building dataset"):
             sparse_labels = []
-            for fg in protein["fragments"]:
+            for fg in sample["fragment_groups"]:
                 cls_idx = label_map.get(fg["interpro_id"])
                 if cls_idx is None:
                     continue
-                for frag in fg["frags"]:
-                    s = frag["start_position"]
-                    e = min(frag["end_position"] + 1, max_seq_len)
-                    if s < L:
-                        sparse_labels.append((cls_idx, s, e))
-            self.samples.append({"uid": uid, "sparse_labels": sparse_labels, "seq_len": L})
+                for start, end in fg["local_spans"]:
+                    sparse_labels.append((cls_idx, int(start), int(end)))
+            self.samples.append({**sample, "sparse_labels": sparse_labels})
 
     def __len__(self):
         return len(self.samples)
 
     def __getitem__(self, idx):
         sample = self.samples[idx]
-        uid = sample["uid"]
-        emb = torch.load(os.path.join(self.emb_dir, f"{uid}.pt"))
+        emb = load_cached_embedding(self.emb_dir, sample)
         label = expand_labels(
             sample["sparse_labels"],
-            sample["seq_len"],
+            int(sample["cropped_sequence_length"]),
             self.num_classes,
             torch.device("cpu"),
         ).float()
-        return uid, emb, label
+        return sample["sample_id"], emb, label
 
 
 def collate_fn(batch):
@@ -317,17 +475,19 @@ def residue_iou(pred_mask, true_mask):
     return float(intersection / union)
 
 
-def protein_fragment_groups_to_masks(protein, label_map, seq_len, max_seq_len=1024):
+def protein_fragment_groups_to_masks(sample, label_map, seq_len, max_seq_len=1021):
     masks = {}
-    for fg in protein["fragments"]:
+    for fg in sample["fragment_groups"]:
         cls_idx = label_map.get(fg["interpro_id"])
         if cls_idx is None:
             continue
         mask = masks.setdefault(cls_idx, np.zeros(seq_len, dtype=bool))
-        for frag in fg["frags"]:
-            s = frag["start_position"]
-            e = min(frag["end_position"] + 1, max_seq_len, seq_len)
-            if s < seq_len:
-                mask[s:e] = True
+        for start, end in fg["local_spans"]:
+            start = int(start)
+            end = int(end)
+            if not (0 <= start < end <= seq_len):
+                raise ValueError(
+                    f"invalid local span {(start, end)} for {sample['sample_id']}"
+                )
+            mask[start:end] = True
     return masks
-
